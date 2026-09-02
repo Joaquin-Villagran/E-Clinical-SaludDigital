@@ -18,6 +18,30 @@ const editableFields = [
 
 type EditableField = (typeof editableFields)[number];
 
+export async function GET(_request: NextRequest, context: { params: Promise<{ id: string }> }) {
+  const supabaseServer = await createServerSupabase();
+  const {
+    data: { session },
+  } = await supabaseServer.auth.getSession();
+
+  if (!session?.user || session.user.user_metadata?.role !== "doctor") {
+    return NextResponse.json({ error: "Acceso denegado." }, { status: 401 });
+  }
+
+  const params = await context.params;
+  const supabase = createAdminSupabase();
+  const result = await supabase.from("pacientes").select("*").eq("id", params.id).maybeSingle();
+
+  if (result.error) {
+    return NextResponse.json({ error: result.error.message }, { status: 500 });
+  }
+  if (!result.data) {
+    return NextResponse.json({ error: "Paciente no encontrado." }, { status: 404 });
+  }
+
+  return NextResponse.json({ ok: true, paciente: result.data });
+}
+
 export async function PATCH(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const supabaseServer = await createServerSupabase();
   const {
