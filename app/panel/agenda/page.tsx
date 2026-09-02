@@ -30,6 +30,21 @@ function getCalendarDates(start: Date, days: number) {
   });
 }
 
+function getArgentinaToday() {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Argentina/Buenos_Aires",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts();
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === type)?.value;
+  const year = part("year");
+  const month = part("month");
+  const day = part("day");
+  if (!year || !month || !day) return new Date();
+  return new Date(Number(year), Number(month) - 1, Number(day));
+}
+
 function formatDayLabel(date: Date) {
   return date.toLocaleDateString("es-AR", { weekday: "short", day: "numeric", month: "short" });
 }
@@ -52,7 +67,7 @@ function formatDateTime(fecha?: string | null, hora?: string | null) {
   }
 }
 
-export default async function PanelAgendaPage({ searchParams }: { searchParams?: { view?: string } }) {
+export default async function PanelAgendaPage({ searchParams }: { searchParams?: Promise<{ view?: string }> }) {
   const user = await getServerUser();
   if (!user || user.user_metadata?.role !== "doctor") {
     redirect("/login");
@@ -96,7 +111,8 @@ export default async function PanelAgendaPage({ searchParams }: { searchParams?:
     }
   }
 
-  const today = new Date();
+  // Los turnos se agendan por fecha local del consultorio, no por el día UTC del servidor.
+  const today = getArgentinaToday();
   const todayIso = today.toISOString().slice(0, 10);
   const weekEnd = new Date(today);
   weekEnd.setDate(today.getDate() + 7);
@@ -105,7 +121,8 @@ export default async function PanelAgendaPage({ searchParams }: { searchParams?:
   monthEnd.setDate(today.getDate() + 30);
   const monthIso = monthEnd.toISOString().slice(0, 10);
 
-  const view = searchParams?.view ?? "week"; // 'day' | 'week' | 'month' | 'full'
+  const resolvedSearchParams = await searchParams;
+  const view = resolvedSearchParams?.view ?? "week"; // 'day' | 'week' | 'month' | 'full'
 
   const [pendingResult, dailyResult, weeklyResult, monthlyResult, monthlyTotalResult, appointmentsResult, pendingAppointmentsResult, monthCanceledResult] = await Promise.all([
     supabase
@@ -137,7 +154,7 @@ export default async function PanelAgendaPage({ searchParams }: { searchParams?:
       .neq("estado", "cancelado"),
     supabase
       .from("turnos")
-      .select("id, nombre, email, telefono, motivo, fecha_preferida, hora_preferida, estado, obra_social, metadata")
+      .select("id, paciente_id, nombre, email, telefono, motivo, fecha_preferida, hora_preferida, estado, tipo_consulta, meet_link, obra_social, metadata")
       .gte("fecha_preferida", todayIso)
       .lte("fecha_preferida", monthIso)
       .eq("estado", "confirmado")
@@ -145,7 +162,7 @@ export default async function PanelAgendaPage({ searchParams }: { searchParams?:
       .limit(16),
     supabase
       .from("turnos")
-      .select("id, nombre, email, telefono, motivo, fecha_preferida, hora_preferida, estado, obra_social, metadata")
+      .select("id, paciente_id, nombre, email, telefono, motivo, fecha_preferida, hora_preferida, estado, tipo_consulta, meet_link, obra_social, metadata")
       .eq("estado", "pendiente")
       .order("created_at", { ascending: false })
       .limit(6),

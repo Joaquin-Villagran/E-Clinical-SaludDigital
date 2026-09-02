@@ -24,6 +24,11 @@ export default async function MiCuentaPage() {
     redirect("/login");
   }
 
+  // El médico trabaja desde el panel: esta vista contiene acciones exclusivas de pacientes.
+  if (user.user_metadata?.role === "doctor") {
+    redirect("/panel");
+  }
+
   const supabase = await createServerSupabase();
   const turnosResult = await supabase
     .from("turnos")
@@ -41,42 +46,12 @@ export default async function MiCuentaPage() {
 
   const turnos = (turnosResult.data ?? []) as Database["public"]["Tables"]["turnos"]["Row"][];
   const estudios = (estudiosResult.data ?? []) as Database["public"]["Tables"]["estudios"]["Row"][];
-  const isDoctor = user.user_metadata?.role === "doctor";
-
   const fullName =
     user.user_metadata?.full_name ||
     [user.user_metadata?.first_name, user.user_metadata?.last_name].filter(Boolean).join(" ");
 
-  type DoctorData = {
-    nombre?: string | null;
-    profesion?: string | null;
-    especialidad?: string | null;
-    telefono?: string | null;
-    documento?: string | null;
-    sexo?: string | null;
-    estado_civil?: string | null;
-    obra_social?: string | null;
-  };
-
-  let doctorData: DoctorData | null = null;
-  if (isDoctor) {
-    const doctorResult = await supabase
-      .from("doctors")
-      .select("nombre, profesion, especialidad, telefono, documento, sexo, estado_civil, obra_social")
-      .eq("user_id", user.id)
-      .maybeSingle();
-    if (!doctorResult.error) {
-      doctorData = doctorResult.data as DoctorData | null;
-    }
-  }
-
-  const profileName = isDoctor
-    ? doctorData?.nombre || fullName || "Profesional"
-    : fullName || "Paciente";
-  const profileRole = isDoctor ? "Profesional" : "Paciente";
-  const profileDescription = isDoctor
-    ? "Este es tu espacio personal como profesional para ver tus datos, tu rol y acceder al panel médico."
-    : "Este es tu espacio personal para ver tus próximos turnos, tus estudios recientes y tus datos personales.";
+  const profileName = fullName || "Paciente";
+  const profileDescription = "Este es tu espacio personal para ver tus próximos turnos, tus estudios recientes y tus datos personales.";
 
   return (
     <main className="min-h-screen bg-[var(--background)] text-[var(--foreground)]">
@@ -186,23 +161,13 @@ export default async function MiCuentaPage() {
               <div className="mb-6">
                 <p className="text-sm uppercase tracking-[0.3em] text-[var(--accent)]">Mi perfil</p>
                
-                {user.user_metadata?.role === "patient" ? (
-                  <div>
-                    <h3 className="mt-4 text-lg font-semibold text-[var(--primary)]">Tus datos personales</h3>
-                    <p className="mt-2 text-sm text-[var(--foreground)]/80">Desde aquí podés actualizar tu nombre, teléfono, documento y otros datos.</p>
-                    <div className="mt-4">
-                      <ProfileForm />
-                    </div>
+                <div>
+                  <h3 className="mt-4 text-lg font-semibold text-[var(--primary)]">Tus datos personales</h3>
+                  <p className="mt-2 text-sm text-[var(--foreground)]/80">Desde aquí podés actualizar tu nombre, teléfono, documento y otros datos.</p>
+                  <div className="mt-4">
+                    <ProfileForm />
                   </div>
-                ) : (
-                  <div>
-                    <h3 className="mt-4 text-lg font-semibold text-[var(--primary)]">Datos profesionales</h3>
-                    <p className="mt-2 text-sm text-[var(--foreground)]/80">Aquí verás tu nombre completo y tu especialidad registrados en el sistema.</p>
-                    <div className="mt-4">
-                      <ProfileForm />
-                    </div>
-                  </div>
-                )}
+                </div>
               </div>
             </section>
           </div>

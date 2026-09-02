@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import SiteHeader from "@/app/components/site-header";
 import PageTitle from "@/app/components/page-title";
-import { createServerSupabase, getServerUser } from "@/lib/supabase-server";
+import { createAdminSupabase, getServerUser } from "@/lib/supabase-server";
 import type { Database } from "@/lib/database.types";
 
 function formatDaysRemaining(fecha: string) {
@@ -35,7 +35,8 @@ export default async function PanelPage() {
     redirect("/login");
   }
 
-  const supabase = await createServerSupabase();
+  // El acceso al panel ya se restringe al rol médico antes de estas consultas.
+  const supabase = createAdminSupabase();
   const today = new Date();
   const todayIso = today.toISOString().slice(0, 10);
   const weekEnd = new Date(today);
@@ -91,20 +92,6 @@ export default async function PanelPage() {
           <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <PageTitle title="Panel médico" description="Controlá tu agenda, pacientes y resultados desde un solo lugar." />
-            </div>
-            <div className="flex flex-wrap gap-3">
-              <a href="/panel/agenda" className="rounded-full border border-[var(--border)] bg-[var(--card)] px-5 py-3 text-sm font-medium hover:bg-[var(--accent)]/10">
-                Agenda
-              </a>
-              <a href="/panel/pacientes" className="rounded-full border border-[var(--border)] bg-[var(--card)] px-5 py-3 text-sm font-medium hover:bg-[var(--accent)]/10">
-                Pacientes
-              </a>
-              <a href="/panel/estadisticas" className="rounded-full border border-[var(--border)] bg-[var(--card)] px-5 py-3 text-sm font-medium hover:bg-[var(--accent)]/10">
-                Estadísticas
-              </a>
-              <a href="/panel/estudios" className="rounded-full border border-[var(--border)] bg-[var(--card)] px-5 py-3 text-sm font-medium hover:bg-[var(--accent)]/10">
-                Resultados
-              </a>
             </div>
           </div>
 

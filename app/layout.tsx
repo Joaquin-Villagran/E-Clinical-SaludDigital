@@ -31,7 +31,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="es" className={`${fraunces.variable} ${inter.variable} ${ibmPlexMono.variable} h-full antialiased`}>
+    <html lang="es" data-scroll-behavior="smooth" className={`${fraunces.variable} ${inter.variable} ${ibmPlexMono.variable} h-full antialiased scroll-smooth`}>
       <body className="min-h-full bg-[var(--background)] text-[var(--foreground)] font-sans">
         {children}
       </body>

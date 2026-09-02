@@ -29,6 +29,7 @@ export async function POST(request: Request) {
 
     const { error } = await supabase.from("turnos").insert([
       {
+        paciente_user_id: user.id,
         nombre,
         email,
         telefono,

@@ -3,8 +3,19 @@ import { createAdminSupabase, createServerSupabase } from "@/lib/supabase-server
 import { Resend } from "resend";
 
 type DoctorTurnoMetadata = Record<string, unknown>;
+type NotificationTurno = {
+  nombre: string | null;
+  email: string | null;
+  telefono: string | null;
+  motivo: string | null;
+  fecha_preferida: string | null;
+  hora_preferida: string | null;
+  obra_social: string | null;
+};
 
-type DoctorTurnoAction = "confirmar" | "cancelar" | "preguntar" | "finalizar";
+type DoctorTurnoAction = "confirmar" | "rechazar" | "cancelar" | "en_espera" | "iniciar_consulta" | "finalizar" | "no_asistio" | "reprogramar" | "configurar_consulta";
+
+const allowedActions: DoctorTurnoAction[] = ["confirmar", "rechazar", "cancelar", "en_espera", "iniciar_consulta", "finalizar", "no_asistio", "reprogramar", "configurar_consulta"];
 
 function normalizePhone(phone: string) {
   const cleaned = phone.replace(/[^0-9+]/g, "");
@@ -13,7 +24,7 @@ function normalizePhone(phone: string) {
   return `+${cleaned}`;
 }
 
-async function sendConfirmationEmail(turno: any) {
+async function sendConfirmationEmail(turno: NotificationTurno) {
   const apiKey = process.env.RESEND_API_KEY;
   const fromEmail = process.env.RESEND_FROM_EMAIL;
   if (!apiKey || !fromEmail || !turno.email) return;
@@ -34,7 +45,7 @@ async function sendConfirmationEmail(turno: any) {
   }
 }
 
-async function sendWhatsappConfirmation(turno: any) {
+async function sendWhatsappConfirmation(turno: NotificationTurno) {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
   const fromWhatsApp = process.env.TWILIO_WHATSAPP_FROM;
@@ -77,18 +88,29 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     }
 
     const body = await request.json();
-    const { action } = body as { action?: string };
+    const { action, motivo, fecha_preferida: fechaPreferida, hora_preferida: horaPreferida, tipo_consulta: tipoConsulta, meet_link: meetLink } = body as {
+      action?: DoctorTurnoAction;
+      motivo?: string;
+      fecha_preferida?: string;
+      hora_preferida?: string;
+      tipo_consulta?: string;
+      meet_link?: string;
+    };
     const params = await context.params;
     const turnoId = params.id;
 
-    if (!action || !["confirmar", "cancelar", "preguntar", "finalizar"].includes(action)) {
+    if (!action || !allowedActions.includes(action)) {
       return NextResponse.json({ error: "Acción inválida." }, { status: 400 });
     }
 
     const supabase = createAdminSupabase();
+    const doctorResult = await supabase.from("doctors").select("id").eq("user_id", session.user.id).maybeSingle();
+    if (!doctorResult.data) {
+      return NextResponse.json({ error: "No se encontró el perfil profesional." }, { status: 403 });
+    }
     const turnoResult = await supabase
       .from("turnos")
-      .select("id, nombre, email, telefono, motivo, fecha_preferida, hora_preferida, obra_social, metadata")
+      .select("id, paciente_id, doctor_id, nombre, email, telefono, motivo, fecha_preferida, hora_preferida, obra_social, estado, tipo_consulta, meet_link, metadata")
       .eq("id", turnoId)
       .single();
     if (turnoResult.error) {
@@ -96,6 +118,9 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     }
 
     const turno = turnoResult.data;
+    if (turno.doctor_id && turno.doctor_id !== doctorResult.data.id) {
+      return NextResponse.json({ error: "Este turno está asignado a otro profesional." }, { status: 403 });
+    }
     const rawMetadata = turno?.metadata;
     const metadata: DoctorTurnoMetadata =
       rawMetadata && typeof rawMetadata === "object" && !Array.isArray(rawMetadata) ? rawMetadata : {};
@@ -113,13 +138,43 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
 
     if (action === "confirmar") {
       updates.estado = "confirmado";
+      updates.doctor_id = doctorResult.data.id;
+      if (tipoConsulta === "presencial" || tipoConsulta === "videoconsulta") updates.tipo_consulta = tipoConsulta;
+      if (typeof meetLink === "string") updates.meet_link = meetLink.trim() || null;
+    } else if (action === "rechazar") {
+      updates.estado = "rechazado";
     } else if (action === "cancelar") {
       updates.estado = "cancelado";
-    } else if (action === "preguntar") {
-      // mantener compatibilidad si se usa desde otro lugar
-      updates.estado = "pendiente";
+    } else if (action === "en_espera") {
+      updates.estado = "en_espera";
+    } else if (action === "iniciar_consulta") {
+      // La sesión conserva el turno confirmado: ese es el requisito de acceso de la sala protegida.
+      updates.estado = "confirmado";
     } else if (action === "finalizar") {
       updates.estado = "finalizado";
+    } else if (action === "no_asistio") {
+      updates.estado = "no_asistio";
+    } else if (action === "reprogramar") {
+      if (!fechaPreferida || !horaPreferida) {
+        return NextResponse.json({ error: "Indicá nueva fecha y hora para reprogramar." }, { status: 400 });
+      }
+      updates.fecha_preferida = fechaPreferida;
+      updates.hora_preferida = horaPreferida;
+      updates.estado = "pendiente";
+      updates.doctor_id = doctorResult.data.id;
+    } else if (action === "configurar_consulta") {
+      if (turno.estado !== "confirmado") {
+        return NextResponse.json({ error: "Sólo se puede configurar un turno confirmado." }, { status: 409 });
+      }
+      if (tipoConsulta !== "presencial" && tipoConsulta !== "videoconsulta") {
+        return NextResponse.json({ error: "Seleccioná la modalidad de consulta." }, { status: 400 });
+      }
+      if (tipoConsulta === "videoconsulta" && (!meetLink || !meetLink.trim())) {
+        return NextResponse.json({ error: "Ingresá el enlace de Meet para la videoconsulta." }, { status: 400 });
+      }
+      updates.tipo_consulta = tipoConsulta;
+      updates.meet_link = typeof meetLink === "string" ? meetLink.trim() || null : null;
+      updates.doctor_id = doctorResult.data.id;
     }
 
     const updateResult = await supabase.from("turnos").update(updates).eq("id", turnoId);
@@ -127,12 +182,26 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
       return NextResponse.json({ error: updateResult.error.message }, { status: 500 });
     }
 
+    const eventResult = await supabase.from("turno_eventos").insert({
+      turno_id: turnoId,
+      doctor_id: doctorResult.data.id,
+      paciente_id: turno.paciente_id,
+      accion: action,
+      estado_anterior: turno.estado,
+      estado_nuevo: updates.estado as string | undefined,
+      detalle: typeof motivo === "string" && motivo.trim() ? motivo.trim() : null,
+    });
+    if (eventResult.error) {
+      // La transición principal ya fue persistida. La auditoría queda disponible al aplicar su migración.
+      console.error("No se pudo registrar la auditoría del turno:", eventResult.error.message);
+    }
+
     if (action === "confirmar" && turno) {
       await Promise.allSettled([sendConfirmationEmail(turno), sendWhatsappConfirmation(turno)]);
     }
 
-    return NextResponse.json({ ok: true });
-  } catch (error: any) {
-    return NextResponse.json({ error: error?.message || String(error) }, { status: 500 });
+    return NextResponse.json({ ok: true, auditRecorded: !eventResult.error });
+  } catch (error: unknown) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
   }
 }

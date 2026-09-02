@@ -97,6 +97,7 @@ type Props = {
   medicaciones: MedicacionRecord[];
   recetas: RecetaRecord[];
   estudios: EstudioRecord[];
+  initialActiveTab?: TabId;
 };
 
 type TabId = "datos" | "antecedentes" | "consultas" | "diagnosticos" | "medicaciones" | "recetas" | "estudios";
@@ -146,9 +147,10 @@ export default function PatientEHRForm({
   medicaciones: initialMedicaciones,
   recetas: initialRecetas,
   estudios: initialEstudios,
+  initialActiveTab = "datos",
 }: Props) {
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<TabId>("datos");
+  const [activeTab, setActiveTab] = useState<TabId>(initialActiveTab);
   const [status, setStatus] = useState<StatusMessage | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
 
@@ -778,21 +780,61 @@ export default function PatientEHRForm({
       {activeTab === "consultas" ? (
         <div className="space-y-6">
           <form onSubmit={handleCreateConsulta} className="grid gap-4 rounded-[1.75rem] border border-[var(--border)] bg-[var(--background)] p-5">
-            <input type="date" value={newConsulta.fecha} onChange={(event) => setNewConsulta((current) => ({ ...current, fecha: event.target.value }))} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" />
-            <textarea rows={2} placeholder="Motivo de consulta" value={newConsulta.motivo_consulta} onChange={(event) => setNewConsulta((current) => ({ ...current, motivo_consulta: event.target.value }))} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" />
-            <textarea rows={2} placeholder="Examen fisico" value={newConsulta.examen_fisico} onChange={(event) => setNewConsulta((current) => ({ ...current, examen_fisico: event.target.value }))} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" />
-            <textarea rows={2} placeholder="Observaciones" value={newConsulta.observaciones} onChange={(event) => setNewConsulta((current) => ({ ...current, observaciones: event.target.value }))} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" />
-            <input placeholder="Profesional ID (opcional)" value={newConsulta.profesional_id} onChange={(event) => setNewConsulta((current) => ({ ...current, profesional_id: event.target.value }))} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" />
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="space-y-1">
+                <span className="text-xs font-semibold text-[var(--foreground)]/70">Fecha de consulta *</span>
+                <input type="date" value={newConsulta.fecha} onChange={(event) => setNewConsulta((current) => ({ ...current, fecha: event.target.value }))} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" required />
+              </label>
+              <label className="space-y-1">
+                <span className="text-xs font-semibold text-[var(--foreground)]/70">Profesional (opcional)</span>
+                <input type="text" placeholder="Nombre o ID del profesional" value={newConsulta.profesional_id} onChange={(event) => setNewConsulta((current) => ({ ...current, profesional_id: event.target.value }))} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" />
+              </label>
+            </div>
+            <label className="space-y-1">
+              <span className="text-xs font-semibold text-[var(--foreground)]/70">Motivo de consulta</span>
+              <textarea rows={2} placeholder="Describe el motivo de la consulta..." value={newConsulta.motivo_consulta} onChange={(event) => setNewConsulta((current) => ({ ...current, motivo_consulta: event.target.value }))} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" />
+            </label>
+            <label className="space-y-1">
+              <span className="text-xs font-semibold text-[var(--foreground)]/70">Examen físico</span>
+              <textarea rows={2} placeholder="Resultados del examen físico..." value={newConsulta.examen_fisico} onChange={(event) => setNewConsulta((current) => ({ ...current, examen_fisico: event.target.value }))} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" />
+            </label>
+            <label className="space-y-1">
+              <span className="text-xs font-semibold text-[var(--foreground)]/70">Observaciones</span>
+              <textarea rows={2} placeholder="Notas adicionales..." value={newConsulta.observaciones} onChange={(event) => setNewConsulta((current) => ({ ...current, observaciones: event.target.value }))} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" />
+            </label>
             <button type="submit" disabled={busyAction === "create-consulta"} className="w-fit rounded-full bg-[var(--primary)] px-5 py-2 text-sm font-semibold text-white disabled:opacity-60">Agregar consulta</button>
           </form>
 
           {consultas.map((consulta) => (
             <article key={consulta.id} className="space-y-3 rounded-[1.75rem] border border-[var(--border)] bg-[var(--background)] p-5">
-              <input type="date" value={consulta.fecha} onChange={(event) => setConsultas((current) => current.map((item) => item.id === consulta.id ? { ...item, fecha: event.target.value } : item))} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" />
-              <textarea rows={2} value={toInput(consulta.motivo_consulta)} onChange={(event) => setConsultas((current) => current.map((item) => item.id === consulta.id ? { ...item, motivo_consulta: event.target.value } : item))} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" />
-              <textarea rows={2} value={toInput(consulta.examen_fisico)} onChange={(event) => setConsultas((current) => current.map((item) => item.id === consulta.id ? { ...item, examen_fisico: event.target.value } : item))} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" />
-              <textarea rows={2} value={toInput(consulta.observaciones)} onChange={(event) => setConsultas((current) => current.map((item) => item.id === consulta.id ? { ...item, observaciones: event.target.value } : item))} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" />
-              <input value={toInput(consulta.profesional_id)} onChange={(event) => setConsultas((current) => current.map((item) => item.id === consulta.id ? { ...item, profesional_id: event.target.value } : item))} placeholder="Profesional ID" className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" />
+              <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
+                <div className="text-sm font-semibold text-[var(--foreground)]">
+                  {consulta.fecha}
+                  {consulta.profesional_id && <span className="ml-3 text-xs text-[var(--foreground)]/60">Profesional: {consulta.profesional_id}</span>}
+                </div>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="space-y-1">
+                  <span className="text-xs font-semibold text-[var(--foreground)]/70">Fecha</span>
+                  <input type="date" value={consulta.fecha} onChange={(event) => setConsultas((current) => current.map((item) => item.id === consulta.id ? { ...item, fecha: event.target.value } : item))} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" />
+                </label>
+                <label className="space-y-1">
+                  <span className="text-xs font-semibold text-[var(--foreground)]/70">Profesional</span>
+                  <input type="text" value={toInput(consulta.profesional_id)} onChange={(event) => setConsultas((current) => current.map((item) => item.id === consulta.id ? { ...item, profesional_id: event.target.value } : item))} placeholder="Nombre o ID del profesional" className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" />
+                </label>
+              </div>
+              <label className="space-y-1">
+                <span className="text-xs font-semibold text-[var(--foreground)]/70">Motivo de consulta</span>
+                <textarea rows={2} value={toInput(consulta.motivo_consulta)} onChange={(event) => setConsultas((current) => current.map((item) => item.id === consulta.id ? { ...item, motivo_consulta: event.target.value } : item))} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" />
+              </label>
+              <label className="space-y-1">
+                <span className="text-xs font-semibold text-[var(--foreground)]/70">Examen físico</span>
+                <textarea rows={2} value={toInput(consulta.examen_fisico)} onChange={(event) => setConsultas((current) => current.map((item) => item.id === consulta.id ? { ...item, examen_fisico: event.target.value } : item))} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" />
+              </label>
+              <label className="space-y-1">
+                <span className="text-xs font-semibold text-[var(--foreground)]/70">Observaciones</span>
+                <textarea rows={2} value={toInput(consulta.observaciones)} onChange={(event) => setConsultas((current) => current.map((item) => item.id === consulta.id ? { ...item, observaciones: event.target.value } : item))} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" />
+              </label>
               <div className="flex gap-3">
                 <button type="button" onClick={() => handleUpdateConsulta(consulta)} disabled={busyAction === `update-consulta-${consulta.id}`} className="rounded-full bg-[var(--primary)] px-4 py-2 text-xs font-semibold text-white disabled:opacity-60">Guardar</button>
                 <button type="button" onClick={() => handleDeleteConsulta(consulta.id)} disabled={busyAction === `delete-consulta-${consulta.id}`} className="rounded-full border border-rose-300 px-4 py-2 text-xs font-semibold text-rose-700 disabled:opacity-60">Eliminar</button>

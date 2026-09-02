@@ -273,7 +273,7 @@ export default function LoginForm({ confirmed, initialMode, forceAccountType, hi
               {mode === "signup" ? (
                 <div className="mt-6 grid gap-5">
                   <label className="space-y-3 text-base text-[var(--foreground)]">
-                    <span className="font-semibold">Documento</span>
+                    <span className="font-semibold">DNI</span>
                     <input
                       type="text"
                       value={documento}

@@ -200,6 +200,7 @@ export default function PatientEHRView({
   const [medicaciones, setMedicaciones] = useState(initialMedicaciones);
   const [recetas, setRecetas] = useState(initialRecetas);
   const [estudios, setEstudios] = useState(initialEstudios);
+  const [turnosState, setTurnos] = useState(turnos);
 
   const [newConsulta, setNewConsulta] = useState<ConsultaFormValues>({
     fecha: todayIso(),
@@ -480,13 +481,13 @@ export default function PatientEHRView({
         <div className="space-y-8">
           <div>
             <h3 className="mb-4 text-lg font-semibold text-[var(--primary)]">Historial de turnos</h3>
-            {turnos.length === 0 ? (
+            {turnosState.length === 0 ? (
               <div className="rounded-[1.75rem] border border-[var(--border)] bg-[var(--background)] p-5 text-center">
                 <p className="text-sm text-[var(--foreground)]/60">Este paciente no registró turnos desde que se sumó a la plataforma.</p>
               </div>
             ) : (
               <div className="space-y-3">
-                {turnos.map((turno) => (
+                {turnosState.map((turno) => (
                   <article key={turno.id} className="flex flex-col gap-2 rounded-[1.75rem] border border-[var(--border)] bg-[var(--background)] p-5 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                       <p className="font-semibold text-[var(--foreground)]">{turno.fecha_preferida} · {turno.hora_preferida}</p>

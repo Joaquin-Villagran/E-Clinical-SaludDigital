@@ -1,5 +1,6 @@
 import Link from "next/link";
 import AuthStatus from "./auth-status";
+import DoctorNavigation from "./doctor-navigation";
 import { HeartHandshake } from "lucide-react";
 import { getServerUser } from "@/lib/supabase-server";
 
@@ -26,43 +27,31 @@ export default async function SiteHeader() {
         </span>
         <span>Santa María</span>
       </Link>
-      <nav className="flex flex-wrap items-center gap-3 text-sm text-[var(--foreground)]/80">
+      <div className="flex flex-wrap items-center gap-3 text-sm text-[var(--foreground)]/80">
         {!user ? (
           <>
             <Link className="rounded-full bg-[var(--primary)] px-4 py-2 text-white font-semibold shadow-sm shadow-[var(--primary)]/20 transition" href="/turnos">
               Sacar turno
             </Link>
           </>
-        ) : (
+        ) : user.user_metadata?.role !== "doctor" ? (
           <Link className="rounded-full border border-[var(--border)] px-4 py-2 transition hover:bg-[var(--accent)]/10" href="/turnos">
             Sacar turno
           </Link>
-        )}
+        ) : null}
         {user ? (
           <>
             {user.user_metadata?.role === "doctor" ? (
-              <>
-                <Link className="rounded-full border border-[var(--border)] px-4 py-2 transition hover:bg-[var(--accent)]/10" href="/panel">
-                  Panel médico
-                </Link>
-                <Link className="rounded-full border border-[var(--border)] px-4 py-2 transition hover:bg-[var(--accent)]/10" href="/panel/agenda">
-                  Agenda
-                </Link>
-                <Link className="rounded-full border border-[var(--border)] px-4 py-2 transition hover:bg-[var(--accent)]/10" href="/panel/pacientes">
-                  Pacientes
-                </Link>
-                <Link className="rounded-full border border-[var(--border)] px-4 py-2 transition hover:bg-[var(--accent)]/10" href="/panel/estudios">
-                  Resultados
-                </Link>
-              </>
+              <DoctorNavigation />
             ) : null}
-            <Link className="rounded-full border border-[var(--border)] px-4 py-2 transition hover:bg-[var(--accent)]/10" href="/mi-cuenta">
+            <Link className={`rounded-full border border-[var(--border)] px-4 py-2 transition hover:bg-[var(--accent)]/10 ${user.user_metadata?.role === "doctor" ? "hidden" : ""}`} href="/mi-cuenta">
               {displayName}
             </Link>
+            {user.user_metadata?.role !== "doctor" ? <AuthStatus /> : null}
           </>
         ) : null}
-        <AuthStatus />
-      </nav>
+        {!user ? <AuthStatus /> : null}
+      </div>
     </header>
   );
 }

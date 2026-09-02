@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import SiteHeader from "@/app/components/site-header";
-import { createAdminSupabase, createServerSupabase, getServerUser } from "@/lib/supabase-server";
+import { createAdminSupabase, getServerUser } from "@/lib/supabase-server";
 import PatientEHRView from "./ehr-patient-view";
 import type { Database } from "@/lib/database.types";
 
@@ -21,9 +21,10 @@ type PatientTurno = {
 
 type PatientConsulta = {
   id: string;
+  paciente_id: string;
+  profesional_id: string | null;
   fecha: string;
-  hora: string;
-  motivo: string | null;
+  motivo_consulta: string | null;
   examen_fisico: string | null;
   observaciones: string | null;
   created_at: string;
@@ -31,7 +32,9 @@ type PatientConsulta = {
 
 type PatientReceta = {
   id: string;
-  descripcion: string | null;
+  paciente_id: string;
+  consulta_id: string | null;
+  fecha_emision: string;
   pdf_url: string | null;
   created_at: string;
 };
@@ -41,9 +44,8 @@ type PatientEstudio = {
   titulo: string | null;
   categoria: string | null;
   fecha: string | null;
-  hora: string | null;
-  file_url: string | null;
-  external_url: string | null;
+  archivo_url: string | null;
+  es_descargable: boolean;
   created_at: string;
 };
 
@@ -76,7 +78,8 @@ export default async function PanelPacientesPage(props: {
   }
 
   const searchParams = await props.searchParams;
-  const supabase = await createServerSupabase();
+  // El rol se verificó arriba; el panel médico debe evitar políticas RLS heredadas recursivas.
+  const supabase = createAdminSupabase();
   const today = new Date().toISOString().slice(0, 10);
   const query = searchParams?.q?.toString().trim() ?? "";
   const selectedPatientId = searchParams?.patientId?.toString().trim() ?? "";
@@ -218,34 +221,32 @@ export default async function PanelPacientesPage(props: {
 
     const consultasResult = await supabase
       .from("consultas")
-      .select("id, fecha, hora, motivo, examen_fisico, observaciones, created_at")
+      .select("id, paciente_id, profesional_id, fecha, motivo_consulta, examen_fisico, observaciones, created_at")
       .eq("paciente_id", selectedPatientRowId)
       .order("fecha", { ascending: false })
-      .order("hora", { ascending: false })
       .limit(20);
     if (!consultasResult.error) {
-      patientConsultas = consultasResult.data as PatientConsulta[];
+      patientConsultas = consultasResult.data as any as PatientConsulta[];
     }
 
     const recetasResult = await supabase
       .from("recetas")
-      .select("id, descripcion, pdf_url, created_at")
+      .select("id, paciente_id, consulta_id, fecha_emision, pdf_url, created_at")
       .eq("paciente_id", selectedPatientRowId)
-      .order("created_at", { ascending: false })
+      .order("fecha_emision", { ascending: false })
       .limit(20);
     if (!recetasResult.error) {
-      patientRecetas = recetasResult.data as PatientReceta[];
+      patientRecetas = recetasResult.data as any as PatientReceta[];
     }
 
     const estudiosResult = await supabase
       .from("estudios")
-      .select("id, titulo, categoria, fecha, hora, file_url, external_url, created_at")
+      .select("id, titulo, categoria, fecha, archivo_url, es_descargable, created_at")
       .eq("paciente_id", selectedPatientRowId)
       .order("fecha", { ascending: false })
-      .order("hora", { ascending: false })
       .limit(20);
     if (!estudiosResult.error) {
-      patientEstudios = estudiosResult.data as PatientEstudio[];
+      patientEstudios = estudiosResult.data as any as PatientEstudio[];
     }
 
     const antecedentesResult = await supabase

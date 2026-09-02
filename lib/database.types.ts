@@ -70,6 +70,15 @@ export interface Database {
           especialidad: string | null;
           telefono: string | null;
           documento: string | null;
+          email: string | null;
+          fecha_nacimiento: string | null;
+          nacionalidad: string | null;
+          direccion: string | null;
+          ciudad: string | null;
+          provincia: string | null;
+          foto_url: string | null;
+          matricula: string | null;
+          tipo_matricula: string | null;
           sexo: string | null;
           estado_civil: string | null;
           obra_social: string | null;
@@ -85,6 +94,15 @@ export interface Database {
           especialidad?: string | null;
           telefono?: string | null;
           documento?: string | null;
+          email?: string | null;
+          fecha_nacimiento?: string | null;
+          nacionalidad?: string | null;
+          direccion?: string | null;
+          ciudad?: string | null;
+          provincia?: string | null;
+          foto_url?: string | null;
+          matricula?: string | null;
+          tipo_matricula?: string | null;
           sexo?: string | null;
           estado_civil?: string | null;
           obra_social?: string | null;
@@ -100,6 +118,15 @@ export interface Database {
           especialidad?: string | null;
           telefono?: string | null;
           documento?: string | null;
+          email?: string | null;
+          fecha_nacimiento?: string | null;
+          nacionalidad?: string | null;
+          direccion?: string | null;
+          ciudad?: string | null;
+          provincia?: string | null;
+          foto_url?: string | null;
+          matricula?: string | null;
+          tipo_matricula?: string | null;
           sexo?: string | null;
           estado_civil?: string | null;
           obra_social?: string | null;
@@ -327,6 +354,10 @@ export interface Database {
       turnos: {
         Row: {
           id: string;
+          paciente_id: string | null;
+          paciente_user_id: string | null;
+          doctor_id: string | null;
+          consulta_id: string | null;
           nombre: string;
           email: string;
           telefono: string;
@@ -337,11 +368,21 @@ export interface Database {
           recordatorio_enviado: boolean;
           obra_social: string | null;
           es_particular: boolean;
+          tipo_consulta: string | null;
+          google_calendar_event_id: string | null;
+          duracion_minutos: number;
+          meet_link: string | null;
+          fecha_hora_inicio_real: string | null;
+          fecha_hora_fin_real: string | null;
           metadata: Json | null;
           created_at: string;
         };
         Insert: {
           id?: string;
+          paciente_id?: string | null;
+          paciente_user_id?: string | null;
+          doctor_id?: string | null;
+          consulta_id?: string | null;
           nombre: string;
           email: string;
           telefono: string;
@@ -352,10 +393,20 @@ export interface Database {
           recordatorio_enviado?: boolean;
           obra_social?: string | null;
           es_particular?: boolean;
+          tipo_consulta?: string | null;
+          google_calendar_event_id?: string | null;
+          duracion_minutos?: number;
+          meet_link?: string | null;
+          fecha_hora_inicio_real?: string | null;
+          fecha_hora_fin_real?: string | null;
           metadata?: Json | null;
           created_at?: string;
         };
         Update: {
+          paciente_id?: string | null;
+          paciente_user_id?: string | null;
+          doctor_id?: string | null;
+          consulta_id?: string | null;
           nombre?: string;
           email?: string;
           telefono?: string;
@@ -366,6 +417,12 @@ export interface Database {
           recordatorio_enviado?: boolean;
           obra_social?: string | null;
           es_particular?: boolean;
+          tipo_consulta?: string | null;
+          google_calendar_event_id?: string | null;
+          duracion_minutos?: number;
+          meet_link?: string | null;
+          fecha_hora_inicio_real?: string | null;
+          fecha_hora_fin_real?: string | null;
           metadata?: Json | null;
           created_at?: string;
         };

@@ -60,15 +60,15 @@ export async function createServerSupabase() {
 export async function getServerUser() {
   const supabase = await createServerSupabase();
   const {
-    data: { session },
+    data: { user },
     error,
-  } = await supabase.auth.getSession();
+  } = await supabase.auth.getUser();
 
-  if (error || !session) {
+  if (error || !user) {
     return null;
   }
 
-  return session.user;
+  return user;
 }
 
 // Admin/service client for server-side operations (use SUPABASE_SECRET_KEY or SUPABASE_SERVICE_ROLE_KEY)
