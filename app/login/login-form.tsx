@@ -42,6 +42,15 @@ export default function LoginForm({ confirmed, initialMode, forceAccountType, hi
 
   const roleLabel = accountType === "doctor" ? "Profesional" : "Paciente";
 
+  const getAuthErrorMessage = (error: { message?: string; status?: number }) => {
+    const errorText = error.message?.toLowerCase() ?? "";
+    if (error.status === 429 || errorText.includes("rate limit") || errorText.includes("too many requests")) {
+      return "Se alcanzó el límite temporal de emails. Esperá unos minutos antes de solicitar otro correo de verificación.";
+    }
+
+    return error.message ?? "No se pudo completar la operación. Intentá nuevamente.";
+  };
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setStatus("loading");
@@ -97,7 +106,7 @@ export default function LoginForm({ confirmed, initialMode, forceAccountType, hi
 
       if (error) {
         setStatus("error");
-        setMessage(error.message);
+        setMessage(getAuthErrorMessage(error));
         return;
       }
 
@@ -112,7 +121,7 @@ export default function LoginForm({ confirmed, initialMode, forceAccountType, hi
     const { data, error } = await supabase.auth.signInWithPassword({ email: trimmedEmail, password });
     if (error) {
       setStatus("error");
-      setMessage(error.message);
+      setMessage(getAuthErrorMessage(error));
       return;
     }
     if (!data?.session) {
@@ -308,13 +317,21 @@ export default function LoginForm({ confirmed, initialMode, forceAccountType, hi
                   </label>
                   <label className="space-y-3 text-base text-[var(--foreground)]">
                     <span className="font-semibold">Estado civil</span>
-                    <input
-                      type="text"
+                    <select
                       value={estadoCivil}
                       onChange={(event) => setEstadoCivil(event.target.value)}
                       required
                       className="w-full rounded-[2rem] border border-[var(--border)] bg-white px-5 py-4 text-lg outline-none transition focus:border-[var(--primary)]/80"
-                    />
+                    >
+                      <option value="">Seleccionar</option>
+                      <option value="Soltero/a">Soltero/a</option>
+                      <option value="Casado/a">Casado/a</option>
+                      <option value="Divorciado/a">Divorciado/a</option>
+                      <option value="Viudo/a">Viudo/a</option>
+                      <option value="Separado/a">Separado/a</option>
+                      <option value="Unión convivencial">Unión convivencial</option>
+                      <option value="Prefiero no decirlo">Prefiero no decirlo</option>
+                    </select>
                   </label>
                   <label className="space-y-3 text-base text-[var(--foreground)]">
                     <span className="font-semibold">Obra social</span>
