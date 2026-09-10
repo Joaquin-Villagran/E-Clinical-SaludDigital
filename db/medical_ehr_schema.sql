@@ -129,6 +129,7 @@ create table if not exists public.medicaciones (
   frecuencia text,
   fecha_inicio date,
   fecha_fin date,
+  cronica boolean not null default false,
   activa boolean not null default true,
   metadata jsonb,
   created_at timestamptz not null default now(),
@@ -281,10 +282,10 @@ grant execute on function public.is_current_user_doctor() to authenticated;
 -- Políticas RLS: solo profesionales autenticados pueden acceder a la EHR
 -- Se hace de forma segura sin recursión.
 
--- doctors: el propio médico puede ver su fila
+-- doctors: usuarios autenticados pueden leer perfiles sin consultar doctors desde su propia política
 drop policy if exists doctors_self_select on public.doctors;
 create policy doctors_self_select on public.doctors
-  for select using (auth.uid() = user_id);
+  for select to authenticated using (auth.uid() is not null);
 
 -- pacientes: el profesional autenticado puede ver/editar toda la ficha
 drop policy if exists doctors_manage_pacientes on public.pacientes;

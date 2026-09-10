@@ -2,6 +2,7 @@
 
 import { FormEvent, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { CalendarDays, MessageSquareText } from "lucide-react";
 import type { Database } from "@/lib/database.types";
 
 type PatientRecord = Database["public"]["Tables"]["pacientes"]["Row"];
@@ -66,6 +67,7 @@ type MedicacionFormValues = {
   frecuencia: string;
   fecha_inicio: string;
   fecha_fin: string;
+  cronica: boolean;
   activa: boolean;
 };
 
@@ -101,6 +103,7 @@ type Props = {
 };
 
 type TabId = "datos" | "antecedentes" | "consultas" | "diagnosticos" | "medicaciones" | "recetas" | "estudios";
+type ConsultaFilter = "finalizado" | "rechazado" | "cancelado" | "no_asistio" | "todas";
 
 const antecedenteOptions = [
   { value: "patologico_personal", label: "Patologico personal" },
@@ -118,6 +121,56 @@ function todayIso() {
 
 function toInput(value: string | null | undefined) {
   return value ?? "";
+}
+
+function metadataText(metadata: unknown, key: string) {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return "No informado";
+  const value = (metadata as Record<string, unknown>)[key];
+  return value === null || value === undefined || value === "" ? "No informado" : String(value);
+}
+
+function isCompletedConsultation(consulta: ConsultaRecord) {
+  if (!consulta.metadata || typeof consulta.metadata !== "object" || Array.isArray(consulta.metadata)) return false;
+  return (consulta.metadata as Record<string, unknown>).estado_turno === "finalizado";
+}
+
+function uniqueCompletedConsultations(consultas: ConsultaRecord[]) {
+  const seen = new Set<string>();
+  return consultas.filter((consulta) => {
+    if (!isCompletedConsultation(consulta)) return false;
+    const metadata = consulta.metadata as Record<string, unknown>;
+    const key = typeof metadata.turno_id === "string" ? metadata.turno_id : consulta.id;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function uniqueConsultations(consultas: ConsultaRecord[]) {
+  const seen = new Set<string>();
+  return consultas.filter((consulta) => {
+    const metadata = consulta.metadata && typeof consulta.metadata === "object" && !Array.isArray(consulta.metadata) ? consulta.metadata as Record<string, unknown> : {};
+    const key = typeof metadata.turno_id === "string" ? metadata.turno_id : consulta.id;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function consultaLabel(consulta: ConsultaRecord) {
+  const date = displayDate(consulta.fecha);
+  const metadata = consulta.metadata && typeof consulta.metadata === "object" && !Array.isArray(consulta.metadata) ? consulta.metadata as Record<string, unknown> : {};
+  const hour = typeof metadata.hora_agendada === "string" ? metadata.hora_agendada.slice(0, 5) : "";
+  const turnoId = typeof metadata.turno_id === "string" ? metadata.turno_id : "";
+  const reason = consulta.motivo_consulta?.trim() || "Consulta clínica";
+  const shortReason = reason.length > 48 ? `${reason.slice(0, 48)}...` : reason;
+  return `${turnoId ? `Turno de agenda: ${turnoId}` : `Consulta: ${consulta.id}`} · ${date}${hour ? ` · ${hour} hs` : ""} · ${shortReason}`;
+}
+
+function displayDate(value: string) {
+  const dateOnly = value.slice(0, 10);
+  const parsed = new Date(`${dateOnly}T12:00:00`);
+  return Number.isNaN(parsed.getTime()) ? dateOnly : parsed.toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" });
 }
 
 function toOptional(value: string) {
@@ -151,6 +204,9 @@ export default function PatientEHRForm({
 }: Props) {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<TabId>(initialActiveTab);
+  const [consultaFilter, setConsultaFilter] = useState<ConsultaFilter>("finalizado");
+  const [editingSection, setEditingSection] = useState<TabId | null>(null);
+  const [editingRecordId, setEditingRecordId] = useState<string | null>(null);
   const [status, setStatus] = useState<StatusMessage | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
 
@@ -202,6 +258,7 @@ export default function PatientEHRForm({
     frecuencia: "",
     fecha_inicio: "",
     fecha_fin: "",
+    cronica: true,
     activa: true,
   });
   const [newReceta, setNewReceta] = useState<RecetaFormValues>({
@@ -221,7 +278,7 @@ export default function PatientEHRForm({
   });
 
   const consultaOptions = useMemo(
-    () => consultas.map((consulta) => ({ id: consulta.id, label: `${consulta.fecha} - ${consulta.id.slice(0, 8)}` })),
+    () => uniqueCompletedConsultations(consultas).map((consulta) => ({ id: consulta.id, label: consultaLabel(consulta) })),
     [consultas]
   );
 
@@ -328,7 +385,6 @@ export default function PatientEHRForm({
         paciente_id: patient.id,
         fecha: newConsulta.fecha,
         motivo_consulta: newConsulta.motivo_consulta,
-        examen_fisico: newConsulta.examen_fisico,
         observaciones: newConsulta.observaciones,
         profesional_id: toOptional(newConsulta.profesional_id),
       });
@@ -350,7 +406,6 @@ export default function PatientEHRForm({
       const payload = await submitJson(`/api/consultas/${consulta.id}`, "PATCH", {
         fecha: consulta.fecha,
         motivo_consulta: consulta.motivo_consulta,
-        examen_fisico: consulta.examen_fisico,
         observaciones: consulta.observaciones,
         profesional_id: consulta.profesional_id,
       });
@@ -450,11 +505,12 @@ export default function PatientEHRForm({
         dosis: newMedicacion.dosis,
         frecuencia: newMedicacion.frecuencia,
         fecha_inicio: toOptional(newMedicacion.fecha_inicio),
-        fecha_fin: toOptional(newMedicacion.fecha_fin),
+        fecha_fin: newMedicacion.cronica ? null : toOptional(newMedicacion.fecha_fin),
+        cronica: newMedicacion.cronica,
         activa: newMedicacion.activa,
       });
       setMedicaciones((current) => [payload.medicacion as MedicacionRecord, ...current]);
-      setNewMedicacion({ consulta_id: "", nombre_medicamento: "", dosis: "", frecuencia: "", fecha_inicio: "", fecha_fin: "", activa: true });
+      setNewMedicacion({ consulta_id: "", nombre_medicamento: "", dosis: "", frecuencia: "", fecha_inicio: "", fecha_fin: "", cronica: true, activa: true });
       setStatus({ type: "success", message: "Medicacion agregada." });
     } catch (error) {
       showError(error, "No se pudo agregar la medicacion.");
@@ -476,6 +532,7 @@ export default function PatientEHRForm({
         frecuencia: medicacion.frecuencia,
         fecha_inicio: medicacion.fecha_inicio,
         fecha_fin: medicacion.fecha_fin,
+        cronica: medicacion.cronica,
         activa: medicacion.activa,
       });
       setMedicaciones((current) => current.map((item) => (item.id === medicacion.id ? (payload.medicacion as MedicacionRecord) : item)));
@@ -634,8 +691,8 @@ export default function PatientEHRForm({
       status.type === "success"
         ? "border-emerald-300 bg-emerald-50 text-emerald-800"
         : status.type === "error"
-        ? "border-rose-300 bg-rose-50 text-rose-800"
-        : "border-slate-300 bg-slate-50 text-slate-800";
+          ? "border-rose-300 bg-rose-50 text-rose-800"
+          : "border-slate-300 bg-slate-50 text-slate-800";
 
     return <div className={`mb-6 rounded-[1.5rem] border p-4 text-sm ${classes}`}>{status.message}</div>;
   }
@@ -646,16 +703,58 @@ export default function PatientEHRForm({
       <button
         key={id}
         type="button"
-        onClick={() => setActiveTab(id)}
-        className={`rounded-full px-5 py-2 text-sm font-semibold transition ${
-          active
-            ? "bg-[var(--primary)] text-white"
-            : "border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)] hover:bg-[var(--accent)]/10"
-        }`}
+        onClick={() => { setActiveTab(id); setEditingSection(null); setEditingRecordId(null); }}
+        className={`rounded-full px-5 py-2 text-sm font-semibold transition ${active
+          ? "bg-[var(--primary)] text-white"
+          : "border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)] hover:bg-[var(--accent)]/10"
+          }`}
       >
         {label}
       </button>
     );
+  }
+
+  function startEditing(section: TabId, recordId?: string) {
+    setActiveTab(section);
+    setEditingSection(section);
+    setEditingRecordId(recordId ?? null);
+    setStatus(null);
+  }
+
+  function renderReadOnlySection() {
+    if (activeTab === "datos") {
+      const fields = [
+        ["Nombre", `${patient.nombre} ${patient.apellido}`],
+        ["DNI", patient.dni],
+        ["Nacimiento", patient.fecha_nacimiento ?? "No informado"],
+        ["Sexo", patient.sexo ?? "No informado"],
+        ["Dirección", patient.direccion ?? "No informada"],
+        ["Teléfono", patient.telefono ?? "No informado"],
+        ["Email", patient.email ?? "No informado"],
+        ["Obra social", patient.obra_social ?? "No informada"],
+        ["N° de afiliado", patient.numero_afiliado ?? "No informado"],
+        ["Contacto de emergencia", patient.contacto_emergencia_nombre ?? "No informado"],
+        ["Teléfono de emergencia", patient.contacto_emergencia_telefono ?? "No informado"],
+      ];
+      return <section className="space-y-5"><div className="flex items-center justify-between gap-3"><div><p className="text-xs uppercase tracking-[.18em] text-[var(--muted)]">Lectura</p><h3 className="mt-1 text-xl font-semibold text-[var(--primary)]">Datos personales</h3></div><button type="button" onClick={() => startEditing("datos")} className="rounded-full bg-[var(--primary)] px-4 py-2 text-sm font-semibold text-white">Editar datos</button></div><div className="grid gap-3 sm:grid-cols-2">{fields.map(([label, value]) => <div key={label} className="rounded-2xl border border-[var(--border)] bg-[var(--background)] p-4"><p className="text-xs font-semibold uppercase tracking-wider text-[var(--muted)]">{label}</p><p className="mt-1 text-sm text-[var(--foreground)]">{value}</p></div>)}</div></section>;
+    }
+
+    if (activeTab === "antecedentes") {
+      return <section className="space-y-5"><div className="flex items-center justify-between gap-3"><div><p className="text-xs uppercase tracking-[.18em] text-[var(--muted)]">Lectura</p><h3 className="mt-1 text-xl font-semibold text-[var(--primary)]">Antecedentes</h3></div><button type="button" onClick={() => startEditing("antecedentes")} className="rounded-full bg-[var(--primary)] px-4 py-2 text-sm font-semibold text-white">Agregar antecedente</button></div><div className="grid gap-4 md:grid-cols-2">{antecedenteOptions.map((option) => { const records = antecedentes.filter((item) => item.tipo === option.value); return <article key={option.value} className="rounded-2xl border border-[var(--border)] bg-[var(--background)] p-5"><div className="flex items-center justify-between gap-3"><h4 className="font-semibold text-[var(--primary)]">{option.label}</h4><span className="text-xs text-[var(--muted)]">{records.length} registro{records.length === 1 ? "" : "s"}</span></div>{records.length ? <div className="mt-3 space-y-3">{records.map((record) => <div key={record.id} className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-3"><p className="text-xs font-semibold uppercase tracking-wider text-[var(--muted)]">Título</p><p className="mt-1 font-semibold text-[var(--foreground)]">{record.titulo || "Sin título"}</p><p className="mt-3 text-xs font-semibold uppercase tracking-wider text-[var(--muted)]">Descripción</p><p className="mt-1 text-sm whitespace-pre-wrap">{record.descripcion || "Sin descripción"}</p><p className="mt-2 text-xs text-[var(--muted)]">Modificado: {new Date(record.updated_at).toLocaleString("es-AR")}</p><button type="button" onClick={() => startEditing("antecedentes", record.id)} className="mt-3 rounded-full border border-[var(--primary)] px-3 py-1.5 text-xs font-semibold text-[var(--primary)]">Editar</button></div>)}</div> : <p className="mt-3 text-sm text-[var(--muted)]">Sin información cargada.</p>}</article>; })}</div></section>;
+    }
+
+    if (activeTab === "consultas") { const uniqueConsultas = uniqueConsultations(consultas); const completedConsultas = uniqueCompletedConsultations(consultas); const filteredConsultas = consultaFilter === "todas" ? uniqueConsultas : uniqueConsultas.filter((consulta) => metadataText(consulta.metadata, "estado_turno") === consultaFilter); return <section className="space-y-5"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-xs uppercase tracking-[.18em] text-[var(--muted)]">Historial</p><h3 className="mt-1 text-xl font-semibold text-[var(--primary)]">Consultas</h3></div><button type="button" onClick={() => startEditing("consultas")} className="rounded-full bg-[var(--primary)] px-4 py-2 text-sm font-semibold text-white">Agregar / modificar consulta</button></div>{filteredConsultas.length ? <div className="space-y-3">{filteredConsultas.map((consulta) => <article key={consulta.id} className="rounded-2xl border border-[var(--border)] bg-[var(--background)] p-5"><div className="grid gap-3 sm:grid-cols-2"><div><p className="flex items-center gap-2 text-xs uppercase tracking-wider text-[var(--muted)]"><CalendarDays className="h-4 w-4" />Fecha</p><p className="mt-1 text-sm font-semibold">{displayDate(consulta.fecha)}</p></div><div><p className="text-xs uppercase tracking-wider text-[var(--muted)]">Hora de agenda</p><p className="mt-1 text-sm font-semibold">{metadataText(consulta.metadata, "hora_agendada")}</p></div><div><p className="text-xs uppercase tracking-wider text-[var(--muted)]">Modalidad</p><p className="mt-1 text-sm">{metadataText(consulta.metadata, "modalidad")}</p></div><div><p className="text-xs uppercase tracking-wider text-[var(--muted)]">Estado del turno</p><p className="mt-1 text-sm font-semibold">{metadataText(consulta.metadata, "estado_turno")}</p></div></div><div className="mt-4 border-t border-[var(--border)] pt-4 space-y-2 text-sm"><p><strong>Motivo:</strong> {consulta.motivo_consulta || "No informado"}</p><p className="flex items-start gap-2"><MessageSquareText className="mt-0.5 h-4 w-4 shrink-0 text-[var(--accent)]" /><span><strong>Observaciones:</strong> {consulta.observaciones || "No informadas"}</span></p><p className="text-xs text-[var(--muted)]"><strong>Turno de agenda:</strong> {metadataText(consulta.metadata, "turno_id")}</p></div><button type="button" onClick={() => startEditing("consultas", consulta.id)} className="mt-4 rounded-full border border-[var(--primary)] px-4 py-2 text-xs font-semibold text-[var(--primary)]">Editar consulta</button></article>)}</div> : <p className="rounded-2xl border border-dashed border-[var(--border)] p-5 text-sm text-[var(--muted)]">No hay consultas en esta categoría.</p>}</section>; }
+
+    const config: Record<Exclude<TabId, "datos" | "antecedentes" | "consultas">, { title: string; addLabel: string; items: Array<Record<string, unknown>>; fields: string[] }> = {
+      diagnosticos: { title: "Diagnósticos", addLabel: "Agregar diagnóstico", items: diagnosticos, fields: ["descripcion", "codigo_cie10", "fecha"] },
+      medicaciones: { title: "Medicaciones", addLabel: "Agregar medicación", items: medicaciones, fields: ["nombre_medicamento", "dosis", "frecuencia", "fecha_inicio", "fecha_fin", "activa"] },
+      recetas: { title: "Recetas", addLabel: "Agregar receta", items: recetas, fields: ["fecha_emision", "pdf_url"] },
+      estudios: { title: "Estudios", addLabel: "Agregar estudio", items: estudios, fields: ["titulo", "categoria", "fecha", "archivo_url"] },
+    };
+    const genericTab = activeTab as Exclude<TabId, "datos" | "antecedentes" | "consultas">;
+    const section = config[genericTab];
+    if (!section) return null;
+    return <section className="space-y-5"><div className="flex items-center justify-between gap-3"><div><p className="text-xs uppercase tracking-[.18em] text-[var(--muted)]">Lectura</p><h3 className="mt-1 text-xl font-semibold text-[var(--primary)]">{section.title}</h3></div><button type="button" onClick={() => startEditing(activeTab)} className="rounded-full bg-[var(--primary)] px-4 py-2 text-sm font-semibold text-white">{section.addLabel}</button></div>{section.items.length ? <div className="space-y-3">{section.items.map((item, index) => <article key={String(item.id ?? index)} className="rounded-2xl border border-[var(--border)] bg-[var(--background)] p-4"><div className="grid gap-3 sm:grid-cols-2">{section.fields.map((field) => <div key={field}><p className="text-xs font-semibold uppercase tracking-wider text-[var(--muted)]">{field.replaceAll("_", " ")}</p><p className="mt-1 text-sm text-[var(--foreground)]">{field === "fecha_fin" && !item[field] ? "De por vida" : String(item[field] ?? "No informado")}</p></div>)}</div><button type="button" onClick={() => startEditing(activeTab, String(item.id))} className="mt-4 rounded-full border border-[var(--primary)] px-4 py-2 text-xs font-semibold text-[var(--primary)]">Editar registro</button></article>)}</div> : <div className="rounded-2xl border border-dashed border-[var(--border)] bg-[var(--background)] p-6 text-sm text-[var(--muted)]">No hay registros cargados. Usá “{section.addLabel}” para agregar uno.</div>}</section>;
   }
 
   return (
@@ -671,8 +770,12 @@ export default function PatientEHRForm({
       </div>
 
       {renderStatus()}
+      {activeTab === "consultas" && editingSection === null ? <div className="mb-4 flex flex-wrap items-center gap-2 rounded-2xl border border-[var(--border)] bg-[var(--background)] p-2"><span className="px-2 text-xs font-semibold uppercase tracking-wider text-[var(--muted)]">Filtrar estado</span><button type="button" onClick={() => setConsultaFilter("finalizado")} className={`rounded-full px-3 py-1.5 text-xs font-semibold ${consultaFilter === "finalizado" ? "bg-[var(--primary)] text-white" : "text-[var(--foreground)]"}`}>Finalizadas</button><button type="button" onClick={() => setConsultaFilter("rechazado")} className={`rounded-full px-3 py-1.5 text-xs font-semibold ${consultaFilter === "rechazado" ? "bg-[var(--primary)] text-white" : "text-[var(--foreground)]"}`}>Rechazadas</button><button type="button" onClick={() => setConsultaFilter("cancelado")} className={`rounded-full px-3 py-1.5 text-xs font-semibold ${consultaFilter === "cancelado" ? "bg-[var(--primary)] text-white" : "text-[var(--foreground)]"}`}>Canceladas</button><button type="button" onClick={() => setConsultaFilter("no_asistio")} className={`rounded-full px-3 py-1.5 text-xs font-semibold ${consultaFilter === "no_asistio" ? "bg-[var(--primary)] text-white" : "text-[var(--foreground)]"}`}>No asistió</button><button type="button" onClick={() => setConsultaFilter("todas")} className={`rounded-full px-3 py-1.5 text-xs font-semibold ${consultaFilter === "todas" ? "bg-[var(--primary)] text-white" : "text-[var(--foreground)]"}`}>Todas</button></div> : null}
+      {editingSection !== null ? <button type="button" onClick={() => { setEditingSection(null); setEditingRecordId(null); }} className="mb-5 rounded-full border border-[var(--border)] px-4 py-2 text-sm font-semibold text-[var(--foreground)]">Volver a lectura</button> : null}
 
-      {activeTab === "datos" ? (
+      {editingSection === null ? renderReadOnlySection() : null}
+
+      {activeTab === "datos" && editingSection === "datos" ? (
         <form onSubmit={handleSavePatient} className="grid gap-6">
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="space-y-2">
@@ -740,9 +843,9 @@ export default function PatientEHRForm({
         </form>
       ) : null}
 
-      {activeTab === "antecedentes" ? (
+      {activeTab === "antecedentes" && editingSection === "antecedentes" ? (
         <div className="space-y-6">
-          <form onSubmit={handleCreateAntecedente} className="grid gap-4 rounded-[1.75rem] border border-[var(--border)] bg-[var(--background)] p-5">
+          {!editingRecordId ? <form onSubmit={handleCreateAntecedente} className="grid gap-4 rounded-[1.75rem] border border-[var(--border)] bg-[var(--background)] p-5">
             <div className="grid gap-4 sm:grid-cols-2">
               <select value={newAntecedente.tipo} onChange={(event) => setNewAntecedente((current) => ({ ...current, tipo: event.target.value as AntecedenteRecord["tipo"] }))} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm">
                 {antecedenteOptions.map((option) => (
@@ -754,9 +857,9 @@ export default function PatientEHRForm({
             <input placeholder="Titulo (opcional)" value={newAntecedente.titulo} onChange={(event) => setNewAntecedente((current) => ({ ...current, titulo: event.target.value }))} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" />
             <textarea rows={3} placeholder="Descripcion" value={newAntecedente.descripcion} onChange={(event) => setNewAntecedente((current) => ({ ...current, descripcion: event.target.value }))} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" />
             <button type="submit" disabled={busyAction === "create-antecedente"} className="w-fit rounded-full bg-[var(--primary)] px-5 py-2 text-sm font-semibold text-white disabled:opacity-60">Agregar antecedente</button>
-          </form>
+          </form> : <button type="button" onClick={() => setEditingRecordId(null)} className="w-fit rounded-full border border-[var(--primary)] px-4 py-2 text-sm font-semibold text-[var(--primary)]">Agregar otro antecedente</button>}
 
-          {antecedentes.map((antecedente) => (
+          {antecedentes.filter((item) => editingRecordId && item.id === editingRecordId).map((antecedente) => (
             <article key={antecedente.id} className="space-y-3 rounded-[1.75rem] border border-[var(--border)] bg-[var(--background)] p-5">
               <div className="grid gap-3 sm:grid-cols-2">
                 <select value={antecedente.tipo} onChange={(event) => setAntecedentes((current) => current.map((item) => item.id === antecedente.id ? { ...item, tipo: event.target.value as AntecedenteRecord["tipo"] } : item))} className="rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm">
@@ -777,7 +880,7 @@ export default function PatientEHRForm({
         </div>
       ) : null}
 
-      {activeTab === "consultas" ? (
+      {activeTab === "consultas" && editingSection === "consultas" ? (
         <div className="space-y-6">
           <form onSubmit={handleCreateConsulta} className="grid gap-4 rounded-[1.75rem] border border-[var(--border)] bg-[var(--background)] p-5">
             <div className="grid gap-3 sm:grid-cols-2">
@@ -795,28 +898,24 @@ export default function PatientEHRForm({
               <textarea rows={2} placeholder="Describe el motivo de la consulta..." value={newConsulta.motivo_consulta} onChange={(event) => setNewConsulta((current) => ({ ...current, motivo_consulta: event.target.value }))} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" />
             </label>
             <label className="space-y-1">
-              <span className="text-xs font-semibold text-[var(--foreground)]/70">Examen físico</span>
-              <textarea rows={2} placeholder="Resultados del examen físico..." value={newConsulta.examen_fisico} onChange={(event) => setNewConsulta((current) => ({ ...current, examen_fisico: event.target.value }))} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" />
-            </label>
-            <label className="space-y-1">
               <span className="text-xs font-semibold text-[var(--foreground)]/70">Observaciones</span>
               <textarea rows={2} placeholder="Notas adicionales..." value={newConsulta.observaciones} onChange={(event) => setNewConsulta((current) => ({ ...current, observaciones: event.target.value }))} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" />
             </label>
             <button type="submit" disabled={busyAction === "create-consulta"} className="w-fit rounded-full bg-[var(--primary)] px-5 py-2 text-sm font-semibold text-white disabled:opacity-60">Agregar consulta</button>
           </form>
 
-          {consultas.map((consulta) => (
+          {consultas.filter((item) => !editingRecordId || item.id === editingRecordId).map((consulta) => (
             <article key={consulta.id} className="space-y-3 rounded-[1.75rem] border border-[var(--border)] bg-[var(--background)] p-5">
               <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
                 <div className="text-sm font-semibold text-[var(--foreground)]">
-                  {consulta.fecha}
+                  {displayDate(consulta.fecha)}
                   {consulta.profesional_id && <span className="ml-3 text-xs text-[var(--foreground)]/60">Profesional: {consulta.profesional_id}</span>}
                 </div>
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 <label className="space-y-1">
                   <span className="text-xs font-semibold text-[var(--foreground)]/70">Fecha</span>
-                  <input type="date" value={consulta.fecha} onChange={(event) => setConsultas((current) => current.map((item) => item.id === consulta.id ? { ...item, fecha: event.target.value } : item))} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" />
+                  <input type="date" value={consulta.fecha.slice(0, 10)} onChange={(event) => setConsultas((current) => current.map((item) => item.id === consulta.id ? { ...item, fecha: event.target.value } : item))} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" />
                 </label>
                 <label className="space-y-1">
                   <span className="text-xs font-semibold text-[var(--foreground)]/70">Profesional</span>
@@ -826,10 +925,6 @@ export default function PatientEHRForm({
               <label className="space-y-1">
                 <span className="text-xs font-semibold text-[var(--foreground)]/70">Motivo de consulta</span>
                 <textarea rows={2} value={toInput(consulta.motivo_consulta)} onChange={(event) => setConsultas((current) => current.map((item) => item.id === consulta.id ? { ...item, motivo_consulta: event.target.value } : item))} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" />
-              </label>
-              <label className="space-y-1">
-                <span className="text-xs font-semibold text-[var(--foreground)]/70">Examen físico</span>
-                <textarea rows={2} value={toInput(consulta.examen_fisico)} onChange={(event) => setConsultas((current) => current.map((item) => item.id === consulta.id ? { ...item, examen_fisico: event.target.value } : item))} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" />
               </label>
               <label className="space-y-1">
                 <span className="text-xs font-semibold text-[var(--foreground)]/70">Observaciones</span>
@@ -844,7 +939,7 @@ export default function PatientEHRForm({
         </div>
       ) : null}
 
-      {activeTab === "diagnosticos" ? (
+      {activeTab === "diagnosticos" && editingSection === "diagnosticos" ? (
         <div className="space-y-6">
           <form onSubmit={handleCreateDiagnostico} className="grid gap-4 rounded-[1.75rem] border border-[var(--border)] bg-[var(--background)] p-5">
             <select value={newDiagnostico.consulta_id} onChange={(event) => setNewDiagnostico((current) => ({ ...current, consulta_id: event.target.value }))} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" required>
@@ -859,7 +954,7 @@ export default function PatientEHRForm({
             <button type="submit" disabled={busyAction === "create-diagnostico"} className="w-fit rounded-full bg-[var(--primary)] px-5 py-2 text-sm font-semibold text-white disabled:opacity-60">Agregar diagnostico</button>
           </form>
 
-          {diagnosticos.map((diagnostico) => (
+          {diagnosticos.filter((item) => !editingRecordId || item.id === editingRecordId).map((diagnostico) => (
             <article key={diagnostico.id} className="space-y-3 rounded-[1.75rem] border border-[var(--border)] bg-[var(--background)] p-5">
               <select value={diagnostico.consulta_id} onChange={(event) => setDiagnosticos((current) => current.map((item) => item.id === diagnostico.id ? { ...item, consulta_id: event.target.value } : item))} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm">
                 {consultaOptions.map((option) => (
@@ -878,7 +973,7 @@ export default function PatientEHRForm({
         </div>
       ) : null}
 
-      {activeTab === "medicaciones" ? (
+      {activeTab === "medicaciones" && editingSection === "medicaciones" ? (
         <div className="space-y-6">
           <form onSubmit={handleCreateMedicacion} className="grid gap-4 rounded-[1.75rem] border border-[var(--border)] bg-[var(--background)] p-5">
             <select value={newMedicacion.consulta_id} onChange={(event) => setNewMedicacion((current) => ({ ...current, consulta_id: event.target.value }))} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm">
@@ -894,8 +989,12 @@ export default function PatientEHRForm({
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <input type="date" value={newMedicacion.fecha_inicio} onChange={(event) => setNewMedicacion((current) => ({ ...current, fecha_inicio: event.target.value }))} className="rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" />
-              <input type="date" value={newMedicacion.fecha_fin} onChange={(event) => setNewMedicacion((current) => ({ ...current, fecha_fin: event.target.value }))} className="rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" />
+              <input type="date" value={newMedicacion.fecha_fin} onChange={(event) => setNewMedicacion((current) => ({ ...current, fecha_fin: event.target.value }))} disabled={newMedicacion.cronica} className="rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm disabled:opacity-50" />
             </div>
+            <label className="inline-flex items-center gap-2 text-sm text-[var(--foreground)]/80">
+              <input type="checkbox" checked={newMedicacion.cronica} onChange={(event) => setNewMedicacion((current) => ({ ...current, cronica: event.target.checked, fecha_fin: event.target.checked ? "" : current.fecha_fin }))} />
+              Tratamiento crónico
+            </label>
             <label className="inline-flex items-center gap-2 text-sm text-[var(--foreground)]/80">
               <input type="checkbox" checked={newMedicacion.activa} onChange={(event) => setNewMedicacion((current) => ({ ...current, activa: event.target.checked }))} />
               Activa
@@ -903,7 +1002,7 @@ export default function PatientEHRForm({
             <button type="submit" disabled={busyAction === "create-medicacion"} className="w-fit rounded-full bg-[var(--primary)] px-5 py-2 text-sm font-semibold text-white disabled:opacity-60">Agregar medicacion</button>
           </form>
 
-          {medicaciones.map((medicacion) => (
+          {medicaciones.filter((item) => !editingRecordId || item.id === editingRecordId).map((medicacion) => (
             <article key={medicacion.id} className="space-y-3 rounded-[1.75rem] border border-[var(--border)] bg-[var(--background)] p-5">
               <select value={toInput(medicacion.consulta_id)} onChange={(event) => setMedicaciones((current) => current.map((item) => item.id === medicacion.id ? { ...item, consulta_id: event.target.value || null } : item))} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm">
                 <option value="">Sin consulta asociada</option>
@@ -918,8 +1017,12 @@ export default function PatientEHRForm({
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 <input type="date" value={toInput(medicacion.fecha_inicio)} onChange={(event) => setMedicaciones((current) => current.map((item) => item.id === medicacion.id ? { ...item, fecha_inicio: event.target.value } : item))} className="rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" />
-                <input type="date" value={toInput(medicacion.fecha_fin)} onChange={(event) => setMedicaciones((current) => current.map((item) => item.id === medicacion.id ? { ...item, fecha_fin: event.target.value } : item))} className="rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" />
+                <input type="date" value={toInput(medicacion.fecha_fin)} onChange={(event) => setMedicaciones((current) => current.map((item) => item.id === medicacion.id ? { ...item, fecha_fin: event.target.value } : item))} disabled={medicacion.cronica} className="rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm disabled:opacity-50" />
               </div>
+              <label className="inline-flex items-center gap-2 text-sm text-[var(--foreground)]/80">
+                <input type="checkbox" checked={medicacion.cronica} onChange={(event) => setMedicaciones((current) => current.map((item) => item.id === medicacion.id ? { ...item, cronica: event.target.checked, fecha_fin: event.target.checked ? null : (item.fecha_fin ?? todayIso()) } : item))} />
+                Tratamiento crónico
+              </label>
               <label className="inline-flex items-center gap-2 text-sm text-[var(--foreground)]/80">
                 <input type="checkbox" checked={medicacion.activa} onChange={(event) => setMedicaciones((current) => current.map((item) => item.id === medicacion.id ? { ...item, activa: event.target.checked } : item))} />
                 Activa
@@ -933,7 +1036,7 @@ export default function PatientEHRForm({
         </div>
       ) : null}
 
-      {activeTab === "recetas" ? (
+      {activeTab === "recetas" && editingSection === "recetas" ? (
         <div className="space-y-6">
           <form onSubmit={handleCreateReceta} className="grid gap-4 rounded-[1.75rem] border border-[var(--border)] bg-[var(--background)] p-5">
             <select value={newReceta.consulta_id} onChange={(event) => setNewReceta((current) => ({ ...current, consulta_id: event.target.value }))} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm">
@@ -943,12 +1046,11 @@ export default function PatientEHRForm({
               ))}
             </select>
             <input type="date" value={newReceta.fecha_emision} onChange={(event) => setNewReceta((current) => ({ ...current, fecha_emision: event.target.value }))} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" />
-            <input placeholder="URL PDF (opcional)" value={newReceta.pdf_url} onChange={(event) => setNewReceta((current) => ({ ...current, pdf_url: event.target.value }))} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" />
-            <textarea rows={3} value={newRecetaMedicaciones} onChange={(event) => setNewRecetaMedicaciones(event.target.value)} placeholder="Medicaciones (1 por linea): nombre|dosis|frecuencia|instrucciones" className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" />
-            <button type="submit" disabled={busyAction === "create-receta"} className="w-fit rounded-full bg-[var(--primary)] px-5 py-2 text-sm font-semibold text-white disabled:opacity-60">Agregar receta</button>
+            <label className="space-y-1"><span className="text-sm font-semibold text-[var(--foreground)]">Entregar receta electrónica / devolución</span><input type="url" placeholder="https://..." value={newReceta.pdf_url} onChange={(event) => setNewReceta((current) => ({ ...current, pdf_url: event.target.value }))} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" /><span className="text-xs text-[var(--muted)]">Pegá el enlace al PDF o documento que podrá abrir el paciente.</span></label>
+            <button type="submit" disabled={busyAction === "create-receta"} className="w-fit rounded-full bg-[var(--primary)] px-5 py-2 text-sm font-semibold text-white disabled:opacity-60">Guardar y entregar receta</button>
           </form>
 
-          {recetas.map((receta) => (
+          {recetas.filter((item) => !editingRecordId || item.id === editingRecordId).map((receta) => (
             <article key={receta.id} className="space-y-3 rounded-[1.75rem] border border-[var(--border)] bg-[var(--background)] p-5">
               <select value={toInput(receta.consulta_id)} onChange={(event) => setRecetas((current) => current.map((item) => item.id === receta.id ? { ...item, consulta_id: event.target.value || null } : item))} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm">
                 <option value="">Sin consulta asociada</option>
@@ -957,19 +1059,7 @@ export default function PatientEHRForm({
                 ))}
               </select>
               <input type="date" value={receta.fecha_emision} onChange={(event) => setRecetas((current) => current.map((item) => item.id === receta.id ? { ...item, fecha_emision: event.target.value } : item))} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" />
-              <input value={toInput(receta.pdf_url)} onChange={(event) => setRecetas((current) => current.map((item) => item.id === receta.id ? { ...item, pdf_url: event.target.value } : item))} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" />
-              <textarea
-                rows={3}
-                value={recetaMedicacionesDrafts[receta.id] ?? ""}
-                onChange={(event) =>
-                  setRecetaMedicacionesDrafts((current) => ({
-                    ...current,
-                    [receta.id]: event.target.value,
-                  }))
-                }
-                placeholder="Actualizar medicaciones: nombre|dosis|frecuencia|instrucciones"
-                className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm"
-              />
+              <label className="space-y-1"><span className="text-sm font-semibold text-[var(--foreground)]">Enlace de receta electrónica / devolución</span><input type="url" value={toInput(receta.pdf_url)} onChange={(event) => setRecetas((current) => current.map((item) => item.id === receta.id ? { ...item, pdf_url: event.target.value } : item))} placeholder="https://..." className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" /></label>
               <div className="flex gap-3">
                 <button type="button" onClick={() => handleUpdateReceta(receta, recetaMedicacionesDrafts[receta.id] ?? "")} disabled={busyAction === `update-receta-${receta.id}`} className="rounded-full bg-[var(--primary)] px-4 py-2 text-xs font-semibold text-white disabled:opacity-60">Guardar</button>
                 <button type="button" onClick={() => handleDeleteReceta(receta.id)} disabled={busyAction === `delete-receta-${receta.id}`} className="rounded-full border border-rose-300 px-4 py-2 text-xs font-semibold text-rose-700 disabled:opacity-60">Eliminar</button>
@@ -979,7 +1069,7 @@ export default function PatientEHRForm({
         </div>
       ) : null}
 
-      {activeTab === "estudios" ? (
+      {activeTab === "estudios" && editingSection === "estudios" ? (
         <div className="space-y-6">
           <form onSubmit={handleCreateEstudio} className="grid gap-4 rounded-[1.75rem] border border-[var(--border)] bg-[var(--background)] p-5">
             <select value={newEstudio.consulta_id} onChange={(event) => setNewEstudio((current) => ({ ...current, consulta_id: event.target.value }))} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm">
@@ -1005,7 +1095,7 @@ export default function PatientEHRForm({
             <button type="submit" disabled={busyAction === "create-estudio"} className="w-fit rounded-full bg-[var(--primary)] px-5 py-2 text-sm font-semibold text-white disabled:opacity-60">Agregar estudio</button>
           </form>
 
-          {estudios.map((estudio) => (
+          {estudios.filter((item) => !editingRecordId || item.id === editingRecordId).map((estudio) => (
             <article key={estudio.id} className="space-y-3 rounded-[1.75rem] border border-[var(--border)] bg-[var(--background)] p-5">
               <select value={toInput(estudio.consulta_id)} onChange={(event) => setEstudios((current) => current.map((item) => item.id === estudio.id ? { ...item, consulta_id: event.target.value || null } : item))} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm">
                 <option value="">Sin consulta asociada</option>

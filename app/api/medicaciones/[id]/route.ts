@@ -55,6 +55,11 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     updates.fecha_fin = body.fecha_fin?.toString().trim() || null;
   }
 
+  if (Object.prototype.hasOwnProperty.call(body, "cronica")) {
+    updates.cronica = Boolean(body.cronica);
+    if (updates.cronica === true) updates.fecha_fin = null;
+  }
+
   if (Object.prototype.hasOwnProperty.call(body, "activa")) {
     updates.activa = Boolean(body.activa);
   }

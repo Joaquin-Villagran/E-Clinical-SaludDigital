@@ -107,6 +107,33 @@ type Props = {
 
 type TabId = "datos" | "antecedentes" | "consultas" | "diagnosticos" | "medicaciones" | "recetas" | "estudios";
 
+function consultaLabel(consulta: ConsultaRecord) {
+  const date = consulta.fecha.slice(0, 10);
+  const metadata = consulta.metadata && typeof consulta.metadata === "object" && !Array.isArray(consulta.metadata) ? consulta.metadata as Record<string, unknown> : {};
+  const hour = typeof metadata.hora_agendada === "string" ? metadata.hora_agendada.slice(0, 5) : "";
+  const turnoId = typeof metadata.turno_id === "string" ? metadata.turno_id : "";
+  const reason = consulta.motivo_consulta?.trim() || "Consulta clínica";
+  const shortReason = reason.length > 48 ? `${reason.slice(0, 48)}...` : reason;
+  return `${turnoId ? `Turno de agenda: ${turnoId}` : `Consulta: ${consulta.id}`} · ${date}${hour ? ` · ${hour} hs` : ""} · ${shortReason}`;
+}
+
+function isCompletedConsultation(consulta: ConsultaRecord) {
+  if (!consulta.metadata || typeof consulta.metadata !== "object" || Array.isArray(consulta.metadata)) return false;
+  return (consulta.metadata as Record<string, unknown>).estado_turno === "finalizado";
+}
+
+function uniqueCompletedConsultations(consultas: ConsultaRecord[]) {
+  const seen = new Set<string>();
+  return consultas.filter((consulta) => {
+    if (!isCompletedConsultation(consulta)) return false;
+    const metadata = consulta.metadata as Record<string, unknown>;
+    const key = typeof metadata.turno_id === "string" ? metadata.turno_id : consulta.id;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 const antecedenteOptions = [
   { value: "patologico_personal", label: "Patologico personal" },
   { value: "familiar", label: "Familiar" },
@@ -126,10 +153,10 @@ const antecedenteCategoriaLabels: Record<string, string> = {
 };
 
 function buildCategoriaAntecedentes(list: AntecedenteRecord[]) {
-  const map: Record<string, { id: string | null; descripcion: string }> = {};
+  const map: Record<string, { id: string | null; titulo: string; descripcion: string }> = {};
   for (const option of antecedenteOptions) {
     const existing = list.find((item) => item.tipo === option.value);
-    map[option.value] = { id: existing?.id ?? null, descripcion: existing?.descripcion ?? "" };
+    map[option.value] = { id: existing?.id ?? null, titulo: existing?.titulo ?? antecedenteCategoriaLabels[option.value], descripcion: existing?.descripcion ?? "" };
   }
   return map;
 }
@@ -173,7 +200,7 @@ export default function PatientEHRView({
   isPatientView = false,
 }: Props) {
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<TabId>("datos");
+  const [activeTab, setActiveTab] = useState<TabId>(isPatientView ? "datos" : "consultas");
   const [status, setStatus] = useState<StatusMessage | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
 
@@ -241,7 +268,7 @@ export default function PatientEHRView({
   });
 
   const consultaOptions = useMemo(
-    () => consultas.map((consulta) => ({ id: consulta.id, label: `${consulta.fecha} - ${consulta.id.slice(0, 8)}` })),
+    () => uniqueCompletedConsultations(consultas).map((consulta) => ({ id: consulta.id, label: consultaLabel(consulta) })),
     [consultas]
   );
 
@@ -272,13 +299,19 @@ export default function PatientEHRView({
     setStatus(null);
 
     try {
+      if (!entry.titulo.trim()) throw new Error("Ingresá un título para el antecedente.");
       if (entry.id) {
-        await submitJson(`/api/antecedentes/${entry.id}`, "PATCH", { descripcion: entry.descripcion });
+        const result = await submitJson(`/api/antecedentes/${entry.id}`, "PATCH", { titulo: entry.titulo, descripcion: entry.descripcion });
+        const updated = result.antecedente as AntecedenteRecord | undefined;
+        if (updated) {
+          setAntecedentes((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+          setCategoriaAntecedentes((current) => ({ ...current, [tipo]: { id: updated.id, titulo: updated.titulo, descripcion: updated.descripcion ?? "" } }));
+        }
       } else {
         const result = await submitJson("/api/antecedentes", "POST", {
           paciente_id: patient.id,
           tipo,
-          titulo: label,
+          titulo: entry.titulo,
           descripcion: entry.descripcion,
           fecha_registro: todayIso(),
         });
@@ -286,7 +319,7 @@ export default function PatientEHRView({
         if (created) {
           setCategoriaAntecedentes((current) => ({
             ...current,
-            [tipo]: { id: created.id, descripcion: created.descripcion ?? "" },
+            [tipo]: { id: created.id, titulo: created.titulo, descripcion: created.descripcion ?? "" },
           }));
           setAntecedentes((current) => [created, ...current]);
         }
@@ -352,6 +385,20 @@ export default function PatientEHRView({
     );
   }
 
+  function editLink(label: string) {
+    return <a href={`/panel/pacientes/${patient.id}`} className="rounded-full border border-[var(--primary)] px-4 py-2 text-xs font-semibold text-[var(--primary)]">{label}</a>;
+  }
+
+  function renderDoctorReadOnly() {
+    const sectionHeader = (title: string, action: string) => <div className="mb-5 flex flex-wrap items-center justify-between gap-3"><div><p className="text-xs uppercase tracking-[.18em] text-[var(--muted)]">Lectura</p><h3 className="mt-1 text-xl font-semibold text-[var(--primary)]">{title}</h3></div>{editLink(action)}</div>;
+    if (activeTab === "datos") return <section>{sectionHeader("Datos personales", "Modificar datos")}<div className="grid gap-3 sm:grid-cols-2">{[["Nombre", `${patient.nombre} ${patient.apellido}`], ["DNI", patient.dni], ["Nacimiento", patient.fecha_nacimiento], ["Sexo", patient.sexo], ["Dirección", patient.direccion], ["Teléfono", patient.telefono], ["Email", patient.email], ["Obra social", patient.obra_social], ["N° de afiliado", patient.numero_afiliado], ["Contacto de emergencia", patient.contacto_emergencia_nombre]].map(([label, value]) => <div key={label} className="rounded-2xl border border-[var(--border)] bg-[var(--background)] p-4"><p className="text-xs font-semibold uppercase tracking-wider text-[var(--muted)]">{label}</p><p className="mt-1 text-sm">{value || "No informado"}</p></div>)}</div></section>;
+    if (activeTab === "antecedentes") return <section>{sectionHeader("Antecedentes", "Agregar / modificar antecedentes")}<div className="grid gap-4 md:grid-cols-2">{antecedenteOptions.map((option) => { const records = antecedentes.filter((item) => item.tipo === option.value); return <article key={option.value} className="rounded-2xl border border-[var(--border)] bg-[var(--background)] p-5"><h4 className="font-semibold text-[var(--primary)]">{antecedenteCategoriaLabels[option.value]}</h4>{records.length ? records.map((record) => <div key={record.id} className="mt-3 rounded-xl border border-[var(--border)] bg-[var(--card)] p-3"><p className="font-semibold">{record.titulo || "Sin título"}</p><p className="mt-1 whitespace-pre-wrap text-sm">{record.descripcion || "Sin descripción"}</p><p className="mt-2 text-xs text-[var(--muted)]">Modificado: {new Date(record.updated_at).toLocaleString("es-AR")}</p></div>) : <p className="mt-3 text-sm text-[var(--muted)]">Sin información cargada.</p>}</article>; })}</div></section>;
+    if (activeTab === "consultas") return <section>{sectionHeader("Consultas y documentos", "Agregar / modificar consulta")}<div className="space-y-4">{consultas.length ? consultas.map((consulta) => <article key={consulta.id} className="rounded-2xl border border-[var(--border)] bg-[var(--background)] p-5"><p className="text-xs uppercase tracking-wider text-[var(--accent)]">Consulta · {consulta.fecha}</p><p className="mt-2 text-sm"><strong>Motivo:</strong> {consulta.motivo_consulta || "No informado"}</p><p className="mt-2 text-sm"><strong>Examen:</strong> {consulta.examen_fisico || "No informado"}</p><p className="mt-2 text-sm"><strong>Observaciones:</strong> {consulta.observaciones || "No informadas"}</p><div className="mt-4 border-t border-[var(--border)] pt-4"><p className="text-sm font-semibold text-[var(--primary)]">Documentos adjuntos</p>{recetas.filter((item) => item.consulta_id === consulta.id).map((receta) => <div key={receta.id} className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--border)] bg-[var(--card)] p-3 text-sm"><span>Receta · {receta.fecha_emision}</span>{receta.pdf_url ? <a href={receta.pdf_url} target="_blank" rel="noreferrer" className="rounded-full bg-[var(--primary)] px-3 py-1.5 text-xs font-semibold text-white">Abrir receta / devolución</a> : <span className="text-xs text-[var(--muted)]">Sin documento</span>}</div>)}{estudios.filter((item) => item.consulta_id === consulta.id).map((estudio) => <div key={estudio.id} className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--border)] bg-[var(--card)] p-3 text-sm"><span>{estudio.titulo} · {estudio.categoria}</span>{estudio.archivo_url ? <a href={estudio.archivo_url} target="_blank" rel="noreferrer" className="rounded-full border border-[var(--primary)] px-3 py-1.5 text-xs font-semibold text-[var(--primary)]">Abrir documento</a> : <span className="text-xs text-[var(--muted)]">Sin archivo</span>}</div>)}</div></article>) : <p className="text-sm text-[var(--muted)]">No hay consultas registradas.</p>}</div></section>;
+    const collections = { diagnosticos: ["Diagnósticos", diagnosticos.map((item) => `${item.fecha} · ${item.descripcion}${item.codigo_cie10 ? ` · CIE-10: ${item.codigo_cie10}` : ""}`), "Agregar / modificar diagnósticos"], medicaciones: ["Medicaciones", medicaciones.map((item) => `${item.nombre_medicamento} · ${item.dosis || "Dosis no informada"} · ${item.frecuencia || "Frecuencia no informada"}`), "Agregar / modificar medicaciones"], recetas: ["Recetas electrónicas y devoluciones", recetas.map((item) => `${item.fecha_emision} · ${item.pdf_url ? "Documento entregado" : "Sin documento entregado"}`), "Agregar / modificar recetas"], estudios: ["Estudios y documentos", estudios.map((item) => `${item.fecha} · ${item.titulo} · ${item.categoria}`), "Agregar / modificar estudios"] } as const;
+    const [title, items, action] = collections[activeTab as keyof typeof collections];
+    return <section>{sectionHeader(title, action)}<div className="space-y-3">{items.length ? items.map((item) => <div key={item} className="rounded-2xl border border-[var(--border)] bg-[var(--background)] p-4 text-sm">{item}</div>) : <p className="text-sm text-[var(--muted)]">No hay registros cargados.</p>}</div></section>;
+  }
+
   return (
     <div className="rounded-[2rem] border border-[var(--border)] bg-[var(--card)] p-8 shadow-[0_24px_80px_rgba(14,75,78,0.08)]">
       <div className="mb-6 flex flex-wrap items-center gap-3">
@@ -362,6 +409,7 @@ export default function PatientEHRView({
         {tabButton("medicaciones", "Medicaciones")}
         {tabButton("recetas", "Recetas")}
         {tabButton("estudios", "Estudios")}
+        {!isPatientView ? <a href={`/panel/pacientes/${patient.id}`} className="ml-auto rounded-full border border-[var(--primary)] px-4 py-2 text-xs font-semibold text-[var(--primary)]">Abrir ficha editable</a> : null}
       </div>
 
       {renderStatus()}
@@ -372,7 +420,9 @@ export default function PatientEHRView({
         </div>
       )}
 
-      {activeTab === "datos" ? (
+      {!isPatientView ? renderDoctorReadOnly() : null}
+
+      {isPatientView && activeTab === "datos" ? (
         <form onSubmit={handleSavePatient} className="grid gap-6">
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="space-y-2">
@@ -440,7 +490,7 @@ export default function PatientEHRView({
         </form>
       ) : null}
 
-      {activeTab === "antecedentes" ? (
+      {isPatientView && activeTab === "antecedentes" ? (
         <div className="space-y-6">
           {antecedenteOptions.map((option) => {
             const entry = categoriaAntecedentes[option.value];
@@ -448,6 +498,18 @@ export default function PatientEHRView({
             return (
               <div key={option.value} className="space-y-3 rounded-[1.75rem] border border-[var(--border)] bg-[var(--background)] p-5">
                 <span className="text-sm font-semibold text-[var(--foreground)]">{antecedenteCategoriaLabels[option.value]}</span>
+                <input
+                  value={entry.titulo}
+                  onChange={(event) =>
+                    setCategoriaAntecedentes((current) => ({
+                      ...current,
+                      [option.value]: { ...current[option.value], titulo: event.target.value },
+                    }))
+                  }
+                  disabled={isPatientView}
+                  placeholder="Título del antecedente"
+                  className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm text-[var(--foreground)] outline-none transition focus:border-[var(--primary)] focus:ring-[var(--primary)]/20 disabled:opacity-60"
+                />
                 <textarea
                   rows={3}
                   value={entry.descripcion}
@@ -477,7 +539,7 @@ export default function PatientEHRView({
         </div>
       ) : null}
 
-      {activeTab === "consultas" ? (
+      {isPatientView && activeTab === "consultas" ? (
         <div className="space-y-8">
           <div>
             <h3 className="mb-4 text-lg font-semibold text-[var(--primary)]">Historial de turnos</h3>
@@ -515,10 +577,11 @@ export default function PatientEHRView({
               ) : (
                 consultas.map((consulta) => (
                   <article key={consulta.id} className="space-y-3 rounded-[1.75rem] border border-[var(--border)] bg-[var(--background)] p-5">
+                    <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-xs uppercase tracking-[.18em] text-[var(--accent)]">Consulta</p><p className="font-semibold text-[var(--primary)]">{consulta.fecha.slice(0, 10)}</p></div>{!isPatientView ? <button type="button" onClick={() => setActiveTab("recetas")} className="rounded-full border border-[var(--primary)] px-4 py-2 text-xs font-semibold text-[var(--primary)]">Agregar documento</button> : null}</div>
                     <input type="date" value={consulta.fecha} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" disabled />
                     <textarea rows={2} value={toInput(consulta.motivo_consulta)} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" disabled />
-                    <textarea rows={2} value={toInput(consulta.examen_fisico)} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" disabled />
                     <textarea rows={2} value={toInput(consulta.observaciones)} className="w-full rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" disabled />
+                    <div className="rounded-2xl border border-[var(--border)] bg-[var(--card)] p-4"><p className="text-sm font-semibold text-[var(--primary)]">Documentos de esta consulta</p><div className="mt-3 space-y-2">{recetas.filter((receta) => receta.consulta_id === consulta.id).map((receta) => <div key={receta.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--border)] p-3 text-sm"><span>Receta electrónica · {receta.fecha_emision}</span>{receta.pdf_url ? <a href={receta.pdf_url} target="_blank" rel="noreferrer" className="rounded-full bg-[var(--primary)] px-3 py-1.5 text-xs font-semibold text-white">Abrir receta electrónica / devolución</a> : <span className="text-xs text-[var(--muted)]">Sin documento entregado</span>}</div>)}{estudios.filter((estudio) => estudio.consulta_id === consulta.id).map((estudio) => <div key={estudio.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--border)] p-3 text-sm"><span>{estudio.titulo} · {estudio.categoria}</span>{estudio.archivo_url ? <a href={estudio.archivo_url} target="_blank" rel="noreferrer" className="rounded-full border border-[var(--primary)] px-3 py-1.5 text-xs font-semibold text-[var(--primary)]">Abrir documento</a> : <span className="text-xs text-[var(--muted)]">Sin archivo</span>}</div>)}{!recetas.some((receta) => receta.consulta_id === consulta.id) && !estudios.some((estudio) => estudio.consulta_id === consulta.id) ? <p className="text-xs text-[var(--muted)]">No hay documentos adjuntos.</p> : null}</div></div>
                   </article>
                 ))
               )}
@@ -527,7 +590,7 @@ export default function PatientEHRView({
         </div>
       ) : null}
 
-      {activeTab === "diagnosticos" ? (
+      {isPatientView && activeTab === "diagnosticos" ? (
         <div className="space-y-6">
           {diagnosticos.length === 0 ? (
             <div className="text-center py-12">
@@ -550,7 +613,7 @@ export default function PatientEHRView({
         </div>
       ) : null}
 
-      {activeTab === "medicaciones" ? (
+      {isPatientView && activeTab === "medicaciones" ? (
         <div className="space-y-6">
           {medicaciones.length === 0 ? (
             <div className="text-center py-12">
@@ -572,7 +635,7 @@ export default function PatientEHRView({
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <input type="date" value={toInput(medicacion.fecha_inicio)} className="rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" disabled />
-                  <input type="date" value={toInput(medicacion.fecha_fin)} className="rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" disabled />
+                  <input type="text" value={medicacion.cronica ? "De por vida" : (medicacion.fecha_fin ? toInput(medicacion.fecha_fin) : "No informada")} className="rounded-[1rem] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm" disabled />
                 </div>
                 <label className="inline-flex items-center gap-2 text-sm text-[var(--foreground)]/80">
                   <input type="checkbox" checked={medicacion.activa} disabled />
@@ -584,8 +647,9 @@ export default function PatientEHRView({
         </div>
       ) : null}
 
-      {activeTab === "recetas" ? (
+      {isPatientView && activeTab === "recetas" ? (
         <div className="space-y-6">
+          {!isPatientView ? <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[var(--accent)]/30 bg-[var(--accent)]/10 p-4 text-sm text-[var(--primary)]"><span>Revisá las recetas y devoluciones entregadas, o gestioná un documento nuevo.</span><a href={`/panel/pacientes/${patient.id}`} className="rounded-full bg-[var(--primary)] px-4 py-2 text-xs font-semibold text-white">Agregar / modificar documento</a></div> : null}
           {recetas.length === 0 ? (
             <div className="text-center py-12">
               <p className="text-sm text-[var(--foreground)]/60">No hay recetas registradas.</p>
@@ -607,7 +671,7 @@ export default function PatientEHRView({
         </div>
       ) : null}
 
-      {activeTab === "estudios" ? (
+      {isPatientView && activeTab === "estudios" ? (
         <div className="space-y-6">
           {estudios.length === 0 ? (
             <div className="text-center py-12">

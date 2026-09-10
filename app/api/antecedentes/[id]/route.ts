@@ -31,7 +31,10 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
 
   if (Object.prototype.hasOwnProperty.call(body, "titulo")) {
     const titulo = body.titulo?.toString().trim();
-    updates.titulo = titulo || "Antecedente";
+    if (!titulo) {
+      return NextResponse.json({ error: "El título del antecedente es obligatorio." }, { status: 400 });
+    }
+    updates.titulo = titulo;
   }
 
   if (Object.prototype.hasOwnProperty.call(body, "descripcion")) {
@@ -50,6 +53,8 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
   if (Object.keys(updates).length === 0) {
     return NextResponse.json({ error: "No se enviaron campos para actualizar." }, { status: 400 });
   }
+
+  updates.updated_at = new Date().toISOString();
 
   const supabase = createAdminSupabase();
   const result = await supabase.from("antecedentes").update(updates).eq("id", id).select().maybeSingle();

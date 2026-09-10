@@ -19,6 +19,7 @@ export async function POST(request: NextRequest) {
   const frecuencia = body.frecuencia?.toString().trim() ?? null;
   const fechaInicio = body.fecha_inicio?.toString().trim() || null;
   const fechaFin = body.fecha_fin?.toString().trim() || null;
+  const cronica = typeof body.cronica === "boolean" ? body.cronica : !fechaFin;
   const activa = typeof body.activa === "boolean" ? body.activa : true;
 
   if (!pacienteId || !nombreMedicamento) {
@@ -36,7 +37,8 @@ export async function POST(request: NextRequest) {
         dosis,
         frecuencia,
         fecha_inicio: fechaInicio,
-        fecha_fin: fechaFin,
+        fecha_fin: cronica ? null : fechaFin,
+        cronica,
         activa,
       },
     ])

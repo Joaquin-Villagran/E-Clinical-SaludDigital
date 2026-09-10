@@ -36,8 +36,17 @@ export default async function PanelHistorialPage({ searchParams }: { searchParam
   const doctorResult = await supabase.from("doctors").select("id").eq("user_id", user.id).maybeSingle();
   if (!doctorResult.data) redirect("/panel");
 
-  let turnsQuery = supabase.from("turnos").select("id, paciente_id, consulta_id, nombre, motivo, fecha_preferida, hora_preferida, estado, tipo_consulta").eq("doctor_id", doctorResult.data.id).gte("fecha_preferida", start).lte("fecha_preferida", end).in("estado", ["finalizado", "no_asistio"]);
-  if (params.estado === "finalizado" || params.estado === "no_asistio") turnsQuery = turnsQuery.eq("estado", params.estado);
+  let turnsQuery = supabase
+    .from("turnos")
+    .select("id, paciente_id, consulta_id, nombre, motivo, fecha_preferida, hora_preferida, estado, tipo_consulta, fecha_hora_fin_real")
+    .eq("doctor_id", doctorResult.data.id)
+    .gte("fecha_preferida", start)
+    .lte("fecha_preferida", end);
+  if (params.estado === "finalizado" || params.estado === "no_asistio") {
+    turnsQuery = turnsQuery.eq("estado", params.estado);
+  } else {
+    turnsQuery = turnsQuery.or("estado.in.(finalizado,no_asistio),fecha_hora_fin_real.not.is.null");
+  }
   if (params.tipo) turnsQuery = turnsQuery.eq("tipo_consulta", params.tipo);
   const turnsResult = await turnsQuery.order("fecha_preferida", { ascending: false }).order("hora_preferida", { ascending: false }).limit(250);
   if (turnsResult.error) throw new Error(turnsResult.error.message);

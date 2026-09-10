@@ -18,6 +18,7 @@ type Props = {
     hora_preferida: string;
     duracion_minutos: number | null;
     motivo: string;
+    estado: string;
     tipo_consulta: string | null;
     meet_link: string | null;
     readyForRoom: boolean;
@@ -28,14 +29,15 @@ type Props = {
 export default function TeleconsultaPatientCard({ turno }: Props) {
   const router = useRouter();
   const [showInformation, setShowInformation] = useState(false);
-  const [consultationType, setConsultationType] = useState(turno.tipo_consulta ?? "");
+  const [consultationType, setConsultationType] = useState(turno.tipo_consulta ?? "videoconsulta");
   const [meetLink, setMeetLink] = useState(turno.meet_link ?? "");
   const [savingConfig, setSavingConfig] = useState(false);
   const [configMessage, setConfigMessage] = useState("");
 
   const isVideo = turno.tipo_consulta === "videoconsulta";
-  const roomLabel =
-    turno.roomState === "too_early" ? "Disponible 10 min antes" : turno.roomState === "finished" ? "Sesión finalizada" : "Sala no disponible";
+  const roomLabel = ["finalizado", "cancelado", "rechazado", "no_asistio"].includes(turno.estado) || turno.roomState === "finished"
+    ? "Sesión finalizada"
+    : turno.roomState === "too_early" ? "Disponible 10 min antes" : "Sala no disponible";
 
   async function saveConfiguration() {
     setSavingConfig(true);
@@ -89,11 +91,11 @@ export default function TeleconsultaPatientCard({ turno }: Props) {
           </button>
         ) : turno.readyForRoom ? (
           <Link
-            href={`/panel/agenda/${turno.id}/sesion`}
+            href={`/teleconsulta/${turno.id}`}
             className="inline-flex items-center justify-center gap-2 rounded-full bg-[var(--primary)] px-4 py-2 text-sm font-semibold text-white"
           >
             <Video className="h-4 w-4" />
-            Abrir sala
+            {turno.estado === "en_consulta" ? "Reingresar a la sala" : "Ingresar a la sala"}
           </Link>
         ) : (
           <span className="self-center text-sm text-[var(--muted)]">{roomLabel}</span>
@@ -154,22 +156,11 @@ export default function TeleconsultaPatientCard({ turno }: Props) {
                     <option value="videoconsulta">Videoconsulta</option>
                   </select>
                 </label>
-                {consultationType === "videoconsulta" ? (
-                  <label className="text-sm">
-                    Enlace de Meet
-                    <input
-                      type="url"
-                      value={meetLink}
-                      onChange={(event) => setMeetLink(event.target.value)}
-                      placeholder="https://meet.google.com/..."
-                      className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--background)] px-3 py-2"
-                    />
-                  </label>
-                ) : null}
+                {consultationType === "videoconsulta" ? <p className="rounded-md border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm text-[var(--muted)]">La videoconsulta se realizará dentro de la plataforma con Jitsi.</p> : null}
                 <button
                   type="button"
                   onClick={saveConfiguration}
-                  disabled={savingConfig || !consultationType || (consultationType === "videoconsulta" && !meetLink.trim())}
+                  disabled={savingConfig || !consultationType}
                   className="w-fit rounded-full bg-[var(--primary)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
                 >
                   {savingConfig ? "Guardando..." : "Guardar configuración"}

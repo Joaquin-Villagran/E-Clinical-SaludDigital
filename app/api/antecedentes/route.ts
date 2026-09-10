@@ -17,7 +17,7 @@ export async function POST(request: NextRequest) {
   const pacienteId = body.paciente_id?.toString().trim();
   const tipo = body.tipo?.toString().trim();
   const titulo = body.titulo?.toString().trim() || "Antecedente";
-  const descripcion = body.descripcion?.toString().trim() ?? null;
+  const descripcion = body.descripcion?.toString().trim() || titulo;
   const fechaRegistro = body.fecha_registro?.toString().trim() || new Date().toISOString().slice(0, 10);
 
   if (!pacienteId || !tipo) {
@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
       paciente_id: pacienteId,
       tipo,
       titulo,
-      descripcion: descripcion || null,
+      descripcion,
       fecha_registro: fechaRegistro,
     },
   ]).select().maybeSingle();

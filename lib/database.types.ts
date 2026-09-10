@@ -253,6 +253,7 @@ export interface Database {
           frecuencia: string | null;
           fecha_inicio: string | null;
           fecha_fin: string | null;
+          cronica: boolean;
           activa: boolean;
           metadata: Json | null;
           created_at: string;
@@ -267,6 +268,7 @@ export interface Database {
           frecuencia?: string | null;
           fecha_inicio?: string | null;
           fecha_fin?: string | null;
+          cronica?: boolean;
           activa?: boolean;
           metadata?: Json | null;
           created_at?: string;
@@ -281,6 +283,7 @@ export interface Database {
           frecuencia?: string | null;
           fecha_inicio?: string | null;
           fecha_fin?: string | null;
+          cronica?: boolean;
           activa?: boolean;
           metadata?: Json | null;
           created_at?: string;

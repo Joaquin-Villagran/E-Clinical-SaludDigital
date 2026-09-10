@@ -17,12 +17,17 @@ export default function ProfileForm() {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [documento, setDocumento] = useState("");
+  const [fechaNacimiento, setFechaNacimiento] = useState("");
+  const [direccion, setDireccion] = useState("");
   const [sexo, setSexo] = useState("");
   const [estadoCivil, setEstadoCivil] = useState("");
   const [obraSocial, setObraSocial] = useState("");
+  const [numeroAfiliado, setNumeroAfiliado] = useState("");
   const [profesion, setProfesion] = useState("");
   const [especialidad, setEspecialidad] = useState("");
   const [telefono, setTelefono] = useState("");
+  const [contactoEmergenciaNombre, setContactoEmergenciaNombre] = useState("");
+  const [contactoEmergenciaTelefono, setContactoEmergenciaTelefono] = useState("");
 
   useEffect(() => {
     let mounted = true;
@@ -63,46 +68,53 @@ export default function ProfileForm() {
 
       if ((metadata.role as string) !== "doctor") {
         try {
-          const { data: pacienteData, error: pacienteError } = await supabase
-            .from("pacientes")
-            .select("id, nombre, email, telefono, documento, sexo, estado_civil, obra_social, profesion")
-            .eq("email", user.email)
-            .maybeSingle();
+          const pacienteResponse = await fetch("/api/pacientes/me", { cache: "no-store" });
+          const pacientePayload = await pacienteResponse.json();
           if (!mounted) return;
-          if (pacienteError) {
-            console.warn("No se pudo leer fila pacientes:", pacienteError.message);
+          if (!pacienteResponse.ok) {
+            console.warn("No se pudo leer fila pacientes:", pacientePayload.error || "Error desconocido");
           } else {
-            pacienteRow = pacienteData;
+            pacienteRow = pacientePayload.paciente;
           }
         } catch (e) {
           console.warn(e);
         }
       }
 
-      setEmail(user.email ?? "");
+      setEmail(pacienteRow?.email ?? user.email ?? "");
       setRole((metadata.role as "patient" | "doctor") ?? "patient");
 
       const telefonoFromRow = doctorRow?.telefono ?? pacienteRow?.telefono ?? undefined;
-      const documentoFromRow = doctorRow?.documento ?? pacienteRow?.documento ?? undefined;
+      const documentoFromRow = doctorRow?.documento ?? pacienteRow?.dni ?? undefined;
+      const fechaNacimientoFromRow = pacienteRow?.fecha_nacimiento ?? undefined;
+      const direccionFromRow = pacienteRow?.direccion ?? undefined;
       const sexoFromRow = doctorRow?.sexo ?? pacienteRow?.sexo ?? undefined;
       const estadoCivilFromRow = doctorRow?.estado_civil ?? pacienteRow?.estado_civil ?? undefined;
       const obraSocialFromRow = doctorRow?.obra_social ?? pacienteRow?.obra_social ?? undefined;
+      const numeroAfiliadoFromRow = pacienteRow?.numero_afiliado ?? undefined;
       const profesionFromRow = doctorRow?.profesion ?? pacienteRow?.profesion ?? undefined;
       const especialidadFromRow = doctorRow?.especialidad ?? undefined;
+      const contactoEmergenciaNombreFromRow = pacienteRow?.contacto_emergencia_nombre ?? undefined;
+      const contactoEmergenciaTelefonoFromRow = pacienteRow?.contacto_emergencia_telefono ?? undefined;
 
       const fullName = metadata.full_name ?? "";
       const firstFromMeta = metadata.first_name ?? fullName.split(" ")[0] ?? "";
       const lastFromMeta = metadata.last_name ?? "";
 
-      setFirstName(firstFromMeta ?? "");
-      setLastName(lastFromMeta ?? "");
+      setFirstName((metadata.role as string) === "doctor" ? (firstFromMeta ?? "") : (pacienteRow?.nombre ?? firstFromMeta ?? ""));
+      setLastName((metadata.role as string) === "doctor" ? (lastFromMeta ?? "") : (pacienteRow?.apellido ?? lastFromMeta ?? ""));
       setDocumento(documentoFromRow ?? metadata.documento ?? "");
+      setFechaNacimiento(fechaNacimientoFromRow ?? "");
+      setDireccion(direccionFromRow ?? "");
       setSexo(sexoFromRow ?? metadata.sexo ?? "");
       setEstadoCivil(estadoCivilFromRow ?? metadata.estado_civil ?? "");
-      setObraSocial(obraSocialFromRow ?? metadata.obra_social ?? "");
+      setObraSocial((metadata.role as string) === "doctor" ? (obraSocialFromRow ?? metadata.obra_social ?? "") : (pacienteRow?.obra_social ?? ""));
+      setNumeroAfiliado(numeroAfiliadoFromRow ?? metadata.numero_afiliado ?? "");
       setProfesion(profesionFromRow ?? metadata.profesion ?? "");
       setEspecialidad(especialidadFromRow ?? metadata.especialidad ?? "");
       setTelefono(telefonoFromRow ?? metadata.telefono ?? metadata.phone ?? "");
+      setContactoEmergenciaNombre(contactoEmergenciaNombreFromRow ?? "");
+      setContactoEmergenciaTelefono(contactoEmergenciaTelefonoFromRow ?? "");
       setAuthenticated(true);
       setLoading(false);
     }
@@ -138,6 +150,7 @@ export default function ProfileForm() {
         sexo: sexo.trim() || null,
         estado_civil: estadoCivil.trim() || null,
         obra_social: obraSocial.trim() || null,
+        numero_afiliado: role === "doctor" ? null : numeroAfiliado.trim() || null,
         profesion: profesion.trim() || null,
         especialidad: role === "doctor" ? especialidad.trim() || null : null,
         telefono: telefono.trim() || null,
@@ -187,17 +200,29 @@ export default function ProfileForm() {
         }
       } else {
         const pacientePayload: any = {
+          user_id: (await supabase.auth.getUser()).data.user?.id,
           email: email || undefined,
           nombre: `${trimmedFirstName} ${trimmedLastName}`,
+          dni: documento.trim() || null,
+          fecha_nacimiento: fechaNacimiento || null,
+          direccion: direccion.trim() || null,
           telefono: telefono.trim() || null,
-          documento: documento.trim() || null,
           sexo: sexo.trim() || null,
-          estado_civil: estadoCivil.trim() || null,
           obra_social: obraSocial.trim() || null,
-          profesion: profesion.trim() || null,
+          numero_afiliado: numeroAfiliado.trim() || null,
+          contacto_emergencia_nombre: contactoEmergenciaNombre.trim() || null,
+          contacto_emergencia_telefono: contactoEmergenciaTelefono.trim() || null,
         };
 
-        const { error: upsertError } = await supabase.from("pacientes").upsert(pacientePayload, { onConflict: ["email"] });
+        const { data: currentPatient } = await supabase
+          .from("pacientes")
+          .select("id")
+          .eq("user_id", (await supabase.auth.getUser()).data.user?.id ?? "")
+          .maybeSingle();
+        const pacienteId = (currentPatient as unknown as { id: string } | null)?.id;
+        const { error: upsertError } = pacienteId
+          ? await supabase.from("pacientes").update(pacientePayload).eq("id", pacienteId)
+          : await supabase.from("pacientes").insert(pacientePayload);
         if (upsertError) {
           console.warn("Error actualizando tabla pacientes:", upsertError.message);
         }
@@ -250,6 +275,29 @@ export default function ProfileForm() {
           />
         </label>
       </div>
+
+      {role !== "doctor" ? (
+        <div className="grid gap-4 sm:grid-cols-2">
+          <label className="space-y-2 text-sm text-[var(--foreground)]/80">
+            <span>Fecha de nacimiento</span>
+            <input
+              type="date"
+              value={fechaNacimiento}
+              onChange={(event) => setFechaNacimiento(event.target.value)}
+              className="w-full rounded-3xl border border-[var(--border)] bg-[var(--background)] px-4 py-3 outline-none transition focus:border-[var(--primary)]/80"
+            />
+          </label>
+          <label className="space-y-2 text-sm text-[var(--foreground)]/80">
+            <span>Dirección</span>
+            <input
+              type="text"
+              value={direccion}
+              onChange={(event) => setDireccion(event.target.value)}
+              className="w-full rounded-3xl border border-[var(--border)] bg-[var(--background)] px-4 py-3 outline-none transition focus:border-[var(--primary)]/80"
+            />
+          </label>
+        </div>
+      ) : null}
 
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="space-y-2 text-sm text-[var(--foreground)]/80">
@@ -329,6 +377,39 @@ export default function ProfileForm() {
           />
         </label>
       </div>
+
+      {role !== "doctor" ? (
+        <div className="grid gap-4 sm:grid-cols-2">
+          <label className="space-y-2 text-sm text-[var(--foreground)]/80">
+            <span>Número de afiliado</span>
+            <input
+              type="text"
+              value={numeroAfiliado}
+              onChange={(event) => setNumeroAfiliado(event.target.value)}
+              placeholder="Ej: 123456789"
+              className="w-full rounded-3xl border border-[var(--border)] bg-[var(--background)] px-4 py-3 outline-none transition focus:border-[var(--primary)]/80"
+            />
+          </label>
+          <label className="space-y-2 text-sm text-[var(--foreground)]/80">
+            <span>Contacto de emergencia</span>
+            <input
+              type="text"
+              value={contactoEmergenciaNombre}
+              onChange={(event) => setContactoEmergenciaNombre(event.target.value)}
+              className="w-full rounded-3xl border border-[var(--border)] bg-[var(--background)] px-4 py-3 outline-none transition focus:border-[var(--primary)]/80"
+            />
+          </label>
+          <label className="space-y-2 text-sm text-[var(--foreground)]/80 sm:col-span-2">
+            <span>Teléfono de emergencia</span>
+            <input
+              type="tel"
+              value={contactoEmergenciaTelefono}
+              onChange={(event) => setContactoEmergenciaTelefono(event.target.value)}
+              className="w-full rounded-3xl border border-[var(--border)] bg-[var(--background)] px-4 py-3 outline-none transition focus:border-[var(--primary)]/80"
+            />
+          </label>
+        </div>
+      ) : null}
 
       <label className="space-y-2 text-sm text-[var(--foreground)]/80">
         <span>Profesión</span>

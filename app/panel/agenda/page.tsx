@@ -4,6 +4,7 @@ import PageTitle from "@/app/components/page-title";
 import { createAdminSupabase, getServerUser } from "@/lib/supabase-server";
 import type { Database, Json } from "@/lib/database.types";
 import TurnoRequestCard from "./turno-request-card";
+import AvailabilityForm from "./availability-form";
 
 type DoctorTurno = Omit<Database["public"]["Tables"]["turnos"]["Row"], "metadata"> & {
   metadata: Record<string, unknown> | null;
@@ -75,6 +76,7 @@ export default async function PanelAgendaPage({ searchParams }: { searchParams?:
 
   const adminSupabase = createAdminSupabase();
   const supabase = adminSupabase;
+  let doctorId = "";
 
   if (user.user_metadata?.role === "doctor") {
     const doctorRowResult = await supabase.from("doctors").select("id").eq("user_id", user.id).single();
@@ -103,13 +105,18 @@ export default async function PanelAgendaPage({ searchParams }: { searchParams?:
           metadata: metadata as Record<string, unknown> | null,
         },
         { onConflict: "user_id" }
-      );
+      ).select("id").single();
 
       if (upsertResult.error) {
         throw new Error(upsertResult.error.message);
       }
+      doctorId = upsertResult.data?.id ?? "";
+    } else {
+      doctorId = doctorRowResult.data.id;
     }
   }
+
+  if (!doctorId) redirect("/panel/mi-perfil");
 
   // Los turnos se agendan por fecha local del consultorio, no por el día UTC del servidor.
   const today = getArgentinaToday();
@@ -132,29 +139,34 @@ export default async function PanelAgendaPage({ searchParams }: { searchParams?:
     supabase
       .from("turnos")
       .select("id", { count: "exact", head: true })
+      .eq("doctor_id", doctorId)
       .eq("fecha_preferida", todayIso)
       .eq("estado", "confirmado"),
     supabase
       .from("turnos")
       .select("id", { count: "exact", head: true })
+      .eq("doctor_id", doctorId)
       .gte("fecha_preferida", todayIso)
       .lte("fecha_preferida", weekIso)
       .eq("estado", "confirmado"),
     supabase
       .from("turnos")
       .select("id", { count: "exact", head: true })
+      .eq("doctor_id", doctorId)
       .gte("fecha_preferida", todayIso)
       .lte("fecha_preferida", monthIso)
       .eq("estado", "confirmado"),
     supabase
       .from("turnos")
       .select("id", { count: "exact", head: true })
+      .eq("doctor_id", doctorId)
       .gte("fecha_preferida", todayIso)
       .lte("fecha_preferida", monthIso)
       .neq("estado", "cancelado"),
     supabase
       .from("turnos")
       .select("id, paciente_id, nombre, email, telefono, motivo, fecha_preferida, hora_preferida, estado, tipo_consulta, meet_link, obra_social, metadata")
+      .eq("doctor_id", doctorId)
       .gte("fecha_preferida", todayIso)
       .lte("fecha_preferida", monthIso)
       .eq("estado", "confirmado")
@@ -169,6 +181,7 @@ export default async function PanelAgendaPage({ searchParams }: { searchParams?:
     supabase
       .from("turnos")
       .select("id", { count: "exact", head: true })
+      .eq("doctor_id", doctorId)
       .gte("fecha_preferida", todayIso)
       .lte("fecha_preferida", monthIso)
       .eq("estado", "cancelado"),
@@ -249,36 +262,10 @@ export default async function PanelAgendaPage({ searchParams }: { searchParams?:
               <PageTitle title="Agenda médica" description="Vé tu agenda diaria, semanal y mensual, + las solicitudes de turno con datos completos." />
             </div>
             <div className="flex flex-wrap gap-3">
-              <a href="/panel/estudios" className="rounded-full border border-[var(--border)] bg-[var(--card)] px-5 py-3 text-sm font-medium hover:bg-[var(--accent)]/10">
-                Subir resultados
-              </a>
               <a href="/panel/pacientes" className="rounded-full border border-[var(--border)] bg-[var(--card)] px-5 py-3 text-sm font-medium hover:bg-[var(--accent)]/10">
                 Ver pacientes
               </a>
             </div>
-          </div>
-
-          <div className="grid gap-4 lg:grid-cols-4">
-            <article className="rounded-[2rem] border border-[var(--border)] bg-[var(--card)] p-6 shadow-[0_24px_80px_rgba(14,75,78,0.08)]">
-              <p className="text-sm uppercase tracking-[0.3em] text-[var(--accent)]">Solicitudes</p>
-              <h2 className="mt-4 text-4xl font-semibold text-[var(--primary)]">{pendingCount}</h2>
-              <p className="mt-2 text-sm text-[var(--foreground)]/75">Turnos pendientes por responder.</p>
-            </article>
-            <article className="rounded-[2rem] border border-[var(--border)] bg-[var(--card)] p-6 shadow-[0_24px_80px_rgba(14,75,78,0.08)]">
-              <p className="text-sm uppercase tracking-[0.3em] text-[var(--accent)]">Hoy</p>
-              <h2 className="mt-4 text-4xl font-semibold text-[var(--primary)]">{dailyCount}</h2>
-              <p className="mt-2 text-sm text-[var(--foreground)]/75">Turnos programados para hoy.</p>
-            </article>
-            <article className="rounded-[2rem] border border-[var(--border)] bg-[var(--card)] p-6 shadow-[0_24px_80px_rgba(14,75,78,0.08)]">
-              <p className="text-sm uppercase tracking-[0.3em] text-[var(--accent)]">Esta semana</p>
-              <h2 className="mt-4 text-4xl font-semibold text-[var(--primary)]">{weeklyCount}</h2>
-              <p className="mt-2 text-sm text-[var(--foreground)]/75">Turnos en los próximos 7 días.</p>
-            </article>
-            <article className="rounded-[2rem] border border-[var(--border)] bg-[var(--card)] p-6 shadow-[0_24px_80px_rgba(14,75,78,0.08)]">
-              <p className="text-sm uppercase tracking-[0.3em] text-[var(--accent)]">Próximo mes</p>
-              <h2 className="mt-4 text-4xl font-semibold text-[var(--primary)]">{monthlyCount}</h2>
-              <p className="mt-2 text-sm text-[var(--foreground)]/75">Turnos en los próximos 30 días.</p>
-            </article>
           </div>
 
           <section className="rounded-[2.5rem] border border-[var(--border)] bg-[var(--card)] p-8 shadow-[0_24px_80px_rgba(14,75,78,0.08)]">
@@ -320,6 +307,15 @@ export default async function PanelAgendaPage({ searchParams }: { searchParams?:
             )}
           </section>
 
+          <AvailabilityForm doctorId={doctorId} />
+
+          <div className="grid gap-4 lg:grid-cols-4">
+            <article className="rounded-[2rem] border border-[var(--border)] bg-[var(--card)] p-5 shadow-[0_16px_40px_rgba(14,75,78,0.06)]"><p className="text-xs uppercase tracking-[0.2em] text-[var(--accent)]">Solicitudes</p><p className="mt-2 text-3xl font-semibold text-[var(--primary)]">{pendingCount}</p><p className="mt-1 text-xs text-[var(--muted)]">Pendientes</p></article>
+            <article className="rounded-[2rem] border border-[var(--border)] bg-[var(--card)] p-5 shadow-[0_16px_40px_rgba(14,75,78,0.06)]"><p className="text-xs uppercase tracking-[0.2em] text-[var(--accent)]">Hoy</p><p className="mt-2 text-3xl font-semibold text-[var(--primary)]">{dailyCount}</p><p className="mt-1 text-xs text-[var(--muted)]">Turnos de hoy</p></article>
+            <article className="rounded-[2rem] border border-[var(--border)] bg-[var(--card)] p-5 shadow-[0_16px_40px_rgba(14,75,78,0.06)]"><p className="text-xs uppercase tracking-[0.2em] text-[var(--accent)]">Semana</p><p className="mt-2 text-3xl font-semibold text-[var(--primary)]">{weeklyCount}</p><p className="mt-1 text-xs text-[var(--muted)]">Próximos 7 días</p></article>
+            <article className="rounded-[2rem] border border-[var(--border)] bg-[var(--card)] p-5 shadow-[0_16px_40px_rgba(14,75,78,0.06)]"><p className="text-xs uppercase tracking-[0.2em] text-[var(--accent)]">Mes</p><p className="mt-2 text-3xl font-semibold text-[var(--primary)]">{monthlyCount}</p><p className="mt-1 text-xs text-[var(--muted)]">Próximos 30 días</p></article>
+          </div>
+
           <div className="grid gap-6 lg:grid-cols-[1.4fr_0.6fr]">
             <section className="rounded-[2.5rem] border border-[var(--border)] bg-[var(--card)] p-8 shadow-[0_24px_80px_rgba(14,75,78,0.08)]">
               <div className="mb-6 flex items-center justify-between gap-4">
@@ -327,9 +323,6 @@ export default async function PanelAgendaPage({ searchParams }: { searchParams?:
                   <p className="text-sm uppercase tracking-[0.3em] text-[var(--accent)]">Próximos pacientes</p>
                   <h2 className="mt-2 text-2xl font-semibold text-[var(--primary)]">Próximos turnos</h2>
                 </div>
-                <a href="/panel/estudios" className="rounded-full border border-[var(--border)] px-4 py-2 text-xs font-semibold text-[var(--foreground)] transition hover:bg-[var(--accent)]/10">
-                  Subir resultados
-                </a>
               </div>
                 <div className="space-y-4">
                 {appointments.length > 0 ? (

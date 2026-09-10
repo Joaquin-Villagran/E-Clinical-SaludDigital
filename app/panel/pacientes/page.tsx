@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import SiteHeader from "@/app/components/site-header";
 import { createAdminSupabase, getServerUser } from "@/lib/supabase-server";
-import PatientEHRView from "./ehr-patient-view";
+import FichaClinicaPanel from "@/app/components/ficha-clinica-panel";
 import type { Database } from "@/lib/database.types";
 
 type PatientTurno = {
@@ -80,6 +80,9 @@ export default async function PanelPacientesPage(props: {
   const searchParams = await props.searchParams;
   // El rol se verificó arriba; el panel médico debe evitar políticas RLS heredadas recursivas.
   const supabase = createAdminSupabase();
+  const doctorResult = await supabase.from("doctors").select("id").eq("user_id", user.id).maybeSingle();
+  if (doctorResult.error) throw new Error(doctorResult.error.message);
+  if (!doctorResult.data) redirect("/panel/mi-perfil");
   const today = new Date().toISOString().slice(0, 10);
   const query = searchParams?.q?.toString().trim() ?? "";
   const selectedPatientId = searchParams?.patientId?.toString().trim() ?? "";
@@ -90,6 +93,7 @@ export default async function PanelPacientesPage(props: {
       .select(
         "id, paciente_id, nombre, email, telefono, motivo, fecha_preferida, hora_preferida, estado, obra_social, es_particular, created_at"
       )
+      .eq("doctor_id", doctorResult.data.id)
       .eq("fecha_preferida", today)
       .eq("estado", "confirmado")
       .order("hora_preferida", { ascending: true })
@@ -251,7 +255,7 @@ export default async function PanelPacientesPage(props: {
 
     const antecedentesResult = await supabase
       .from("antecedentes")
-      .select("id, tipo, titulo, descripcion, created_at")
+      .select("id, tipo, titulo, descripcion, fecha_registro, updated_at, created_at")
       .eq("paciente_id", selectedPatientRowId)
       .order("created_at", { ascending: false })
       .limit(20);
@@ -315,15 +319,18 @@ export default async function PanelPacientesPage(props: {
 
     // Si no se encontró el paciente pero existe en auth, crear registro automáticamente
     if (!patientFull && selectedPatient.user_id && selectedPatient.source === "auth") {
+      const nameParts = selectedPatient.nombre.trim().split(/\s+/);
+      const patientFirstName = nameParts.shift() || "Sin nombre";
       const createResult = await supabase
         .from("pacientes")
         .insert([
           {
             user_id: selectedPatient.user_id,
-            nombre: selectedPatient.nombre || "Sin nombre",
+            nombre: patientFirstName,
+            apellido: nameParts.join(" ") || "Sin apellido",
             email: selectedPatient.email || "",
             telefono: selectedPatient.telefono || null,
-            dni: selectedPatient.dni || null,
+            dni: selectedPatient.dni || `PENDIENTE-${selectedPatient.user_id.slice(0, 8)}`,
           },
         ])
         .select("*")
@@ -348,6 +355,48 @@ export default async function PanelPacientesPage(props: {
         .order("created_at", { ascending: false });
       if (!antecedentesResult.error) {
         antecedentes = antecedentesResult.data as Database["public"]["Tables"]["antecedentes"]["Row"][];
+      }
+
+      const agendaTurnosByPatient = await supabase
+        .from("turnos")
+        .select("id, doctor_id, fecha_preferida, hora_preferida, motivo, tipo_consulta, estado")
+        .eq("paciente_id", patientId)
+        .order("fecha_preferida", { ascending: false });
+      const agendaTurnosByUser = patientFull.user_id
+        ? await supabase.from("turnos").select("id, doctor_id, fecha_preferida, hora_preferida, motivo, tipo_consulta, estado").eq("paciente_user_id", patientFull.user_id).order("fecha_preferida", { ascending: false })
+        : { data: [] };
+      const agendaTurnosByEmail = patientFull.email
+        ? await supabase.from("turnos").select("id, doctor_id, fecha_preferida, hora_preferida, motivo, tipo_consulta, estado").eq("email", patientFull.email).order("fecha_preferida", { ascending: false })
+        : { data: [] };
+      const agendaTurnos = Array.from(new Map([
+        ...(agendaTurnosByPatient.data ?? []),
+        ...(agendaTurnosByUser.data ?? []),
+        ...(agendaTurnosByEmail.data ?? []),
+      ].map((turno) => [turno.id, turno])).values());
+
+      for (const turno of agendaTurnos) {
+          const existingConsulta = await supabase
+            .from("consultas")
+            .select("id")
+            .eq("turno_id", turno.id)
+            .maybeSingle();
+
+          if (!existingConsulta.error && !existingConsulta.data) {
+            await supabase.from("consultas").insert({
+              paciente_id: patientId,
+              turno_id: turno.id,
+              profesional_id: turno.doctor_id ?? doctorResult.data.id,
+              fecha: turno.fecha_preferida,
+              motivo_consulta: turno.motivo,
+              observaciones: `Agenda: ${turno.fecha_preferida} a las ${String(turno.hora_preferida).slice(0, 5)} hs. Modalidad: ${turno.tipo_consulta === "videoconsulta" ? "Teleconsulta" : "Consulta presencial"}. Estado inicial: ${turno.estado}.`,
+              metadata: {
+                turno_id: turno.id,
+                hora_agendada: turno.hora_preferida,
+                modalidad: turno.tipo_consulta,
+                estado_turno: turno.estado,
+              },
+            });
+          }
       }
 
       const consultasResult = await supabase
@@ -436,16 +485,10 @@ export default async function PanelPacientesPage(props: {
               ← Volver
             </a>
           </div>
-          <PatientEHRView
-            patient={patientFull}
-            antecedentes={antecedentes}
-            consultas={consultas}
-            diagnosticos={diagnosticos}
-            medicaciones={medicaciones}
-            recetas={recetas}
-            estudios={estudios}
-            turnos={turnosHistorial}
-            isPatientView={false}
+          <FichaClinicaPanel
+            pacienteId={patientFull.id}
+            prefill={{ nombreCompleto: `${patientFull.nombre} ${patientFull.apellido}`, telefono: patientFull.telefono ?? "", email: patientFull.email ?? "", obraSocial: patientFull.obra_social }}
+            initialActiveTab="consultas"
           />
         </section>
       </main>
@@ -519,7 +562,7 @@ export default async function PanelPacientesPage(props: {
                               href={`/panel/pacientes?q=${encodeURIComponent(query)}&patientId=${paciente.id}`}
                               className="inline-flex items-center justify-center rounded-full border border-[var(--border)] px-4 py-2 text-sm font-semibold text-[var(--foreground)] transition hover:bg-[var(--accent)]/10"
                             >
-                              Ver ficha
+                              Ver Paciente
                             </a>
                           </div>
                         </article>
@@ -547,16 +590,10 @@ export default async function PanelPacientesPage(props: {
                       ← Cerrar
                     </a>
                   </div>
-                  <PatientEHRView
-                    patient={patientFull}
-                    antecedentes={antecedentes}
-                    consultas={consultas}
-                    diagnosticos={diagnosticos}
-                    medicaciones={medicaciones}
-                    recetas={recetas}
-                    estudios={estudios}
-                    turnos={turnosHistorial}
-                    isPatientView={false}
+                  <FichaClinicaPanel
+                    pacienteId={patientFull.id}
+                    prefill={{ nombreCompleto: `${patientFull.nombre} ${patientFull.apellido}`, telefono: patientFull.telefono ?? "", email: patientFull.email ?? "", obraSocial: patientFull.obra_social }}
+                    initialActiveTab="consultas"
                   />
                 </div>
               ) : selectedPatient ? (

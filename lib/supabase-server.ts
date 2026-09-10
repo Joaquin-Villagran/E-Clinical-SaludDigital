@@ -1,4 +1,4 @@
-import { createServerClient } from "@supabase/auth-helpers-nextjs";
+import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/database.types";
@@ -16,17 +16,16 @@ export async function createServerSupabase() {
   }
 
   // pass a cookie helper compatible with Supabase's server client expectations
-  const cookieStore = (await cookies()) as any;
+  const cookieStore = await cookies();
 
   // collect pending cookies when they cannot be written in this context
-  const pendingCookies: Array<{ name: string; value: string; options?: any }> = [];
+  const pendingCookies: Array<{ name: string; value: string; options?: Record<string, unknown> }> = [];
 
   const cookieMethods = {
-    getAll: async () => {
-      const cookieList = await cookieStore.getAll?.();
-      return (cookieList ?? []).map((cookie: any) => ({ name: cookie.name, value: cookie.value ?? "" }));
+    getAll: () => {
+      return cookieStore.getAll().map((cookie) => ({ name: cookie.name, value: cookie.value ?? "" }));
     },
-    setAll: async (setCookies: Array<{ name: string; value: string; options?: any }>) => {
+    setAll: (setCookies: Array<{ name: string; value: string; options?: Record<string, unknown> }>) => {
       for (const { name, value, options } of setCookies) {
         try {
           if (typeof cookieStore.set === "function") {
@@ -35,7 +34,7 @@ export async function createServerSupabase() {
             // store to pending so a Route Handler / Server Action can apply them
             pendingCookies.push({ name, value, options });
           }
-        } catch (e) {
+        } catch {
           // On errors, also collect as pending so the caller can handle them
           pendingCookies.push({ name, value, options });
         }
@@ -45,14 +44,10 @@ export async function createServerSupabase() {
 
   const supabase = createServerClient<Database>(url, anonKey, {
     cookies: cookieMethods,
-    cookieOptions: {
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-    },
   });
 
   // expose pending cookies for the caller (Route Handler / Server Action can read and apply them)
-  (supabase as any)._pendingCookies = pendingCookies;
+  (supabase as unknown as { _pendingCookies: typeof pendingCookies })._pendingCookies = pendingCookies;
 
   return supabase;
 }

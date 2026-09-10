@@ -23,9 +23,7 @@ export async function POST(request: NextRequest) {
     let titulo = "";
     let categoria = "";
     let fecha = "";
-    let hora = "";
     let archivoUrl = "";
-    let externalUrl = "";
     let esDescargable = false;
     let turnoId = "";
     let file: File | null = null;
@@ -38,9 +36,7 @@ export async function POST(request: NextRequest) {
       titulo = body.titulo?.toString().trim() ?? "";
       categoria = body.categoria?.toString().trim() ?? "";
       fecha = body.fecha?.toString() ?? "";
-      hora = body.hora?.toString() ?? "";
       archivoUrl = body.archivo_url?.toString().trim() ?? body.file_url?.toString().trim() ?? "";
-      externalUrl = body.external_url?.toString().trim() ?? "";
       esDescargable = Boolean(body.es_descargable);
       turnoId = body.turno_id?.toString().trim() ?? "";
     } else {
@@ -51,9 +47,7 @@ export async function POST(request: NextRequest) {
       titulo = formData.get("titulo")?.toString().trim() ?? "";
       categoria = formData.get("categoria")?.toString().trim() ?? "";
       fecha = formData.get("fecha")?.toString() ?? "";
-      hora = formData.get("hora")?.toString() ?? "";
       archivoUrl = formData.get("archivo_url")?.toString().trim() ?? formData.get("file_url")?.toString().trim() ?? "";
-      externalUrl = formData.get("external_url")?.toString().trim() ?? "";
       esDescargable = formData.get("es_descargable")?.toString() === "true";
       turnoId = formData.get("turno_id")?.toString().trim() ?? "";
       file = formData.get("file") as File | null;
@@ -91,10 +85,6 @@ export async function POST(request: NextRequest) {
       esDescargable = true;
     }
 
-    if (!archivoUrl && externalUrl) {
-      archivoUrl = externalUrl;
-    }
-
     if (!pacienteId && pacienteEmail) {
       const patientLookup = await supabase.from("pacientes").select("id").eq("email", pacienteEmail).maybeSingle();
       if (patientLookup.error) {
@@ -113,7 +103,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    let insertResult = await supabase
+    const insertResult = await supabase
       .from("estudios")
       .insert([
         {
@@ -128,25 +118,6 @@ export async function POST(request: NextRequest) {
       ])
       .select()
       .maybeSingle();
-
-    if (insertResult.error) {
-      // Fallback para esquema legacy: conserva compatibilidad si aun no migraste la tabla.
-      insertResult = await supabase
-        .from("estudios")
-        .insert([
-          {
-            paciente_email: pacienteEmail,
-            titulo,
-            categoria,
-            fecha,
-            hora: hora || "00:00",
-            file_url: archivoUrl || null,
-            external_url: externalUrl || null,
-          },
-        ])
-        .select()
-        .maybeSingle();
-    }
 
     if (insertResult.error) {
       return NextResponse.json({ error: insertResult.error.message }, { status: 500 });

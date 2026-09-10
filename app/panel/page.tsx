@@ -4,29 +4,16 @@ import PageTitle from "@/app/components/page-title";
 import { createAdminSupabase, getServerUser } from "@/lib/supabase-server";
 import type { Database } from "@/lib/database.types";
 
-function formatDaysRemaining(fecha: string) {
-  const target = new Date(fecha);
-  const now = new Date();
-  const delta = Math.ceil((target.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-  return delta;
-}
-
 function formatDateTime(fecha?: string | null, hora?: string | null) {
   if (!fecha) return "Fecha no disponible";
-  try {
-    const iso = hora ? `${fecha}T${hora}` : `${fecha}T00:00:00`;
-    const d = new Date(iso);
-    const opts: Intl.DateTimeFormatOptions = { weekday: "short", day: "numeric", month: "short" };
-    if (hora) {
-      // @ts-ignore
-      opts.hour = "2-digit";
-      // @ts-ignore
-      opts.minute = "2-digit";
-    }
-    return d.toLocaleString("es-AR", opts);
-  } catch (e) {
-    return `${fecha} ${hora ?? ""}`;
-  }
+  const date = new Date(hora ? `${fecha}T${hora}` : `${fecha}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return `${fecha} ${hora ?? ""}`;
+  return date.toLocaleString("es-AR", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    ...(hora ? { hour: "2-digit", minute: "2-digit" } : {}),
+  });
 }
 
 export default async function PanelPage() {
@@ -37,6 +24,10 @@ export default async function PanelPage() {
 
   // El acceso al panel ya se restringe al rol médico antes de estas consultas.
   const supabase = createAdminSupabase();
+  const doctorResult = await supabase.from("doctors").select("id").eq("user_id", user.id).maybeSingle();
+  if (doctorResult.error) throw new Error(doctorResult.error.message);
+  if (!doctorResult.data) redirect("/panel/mi-perfil");
+  const doctorId = doctorResult.data.id;
   const today = new Date();
   const todayIso = today.toISOString().slice(0, 10);
   const weekEnd = new Date(today);
@@ -46,43 +37,56 @@ export default async function PanelPage() {
   monthEnd.setDate(today.getDate() + 30);
   const monthIso = monthEnd.toISOString().slice(0, 10);
 
-  const [pendingResult, upcomingWeekResult, upcomingMonthResult, todayAppointmentsResult, estudiosResult] = await Promise.all([
+  const [pendingResult, upcomingWeekResult, upcomingMonthResult, presencialCrmResult, videoconsultaCrmResult, todayAppointmentsResult, estudiosResult] = await Promise.all([
     supabase.from("turnos").select("id", { count: "exact", head: true }).eq("estado", "pendiente"),
     supabase
       .from("turnos")
       .select("id", { count: "exact", head: true })
+      .eq("doctor_id", doctorId)
       .gte("fecha_preferida", todayIso)
       .lte("fecha_preferida", weekIso)
       .eq("estado", "confirmado"),
     supabase
       .from("turnos")
       .select("id", { count: "exact", head: true })
+      .eq("doctor_id", doctorId)
       .gte("fecha_preferida", todayIso)
       .lte("fecha_preferida", monthIso)
       .eq("estado", "confirmado"),
+    supabase.from("turnos").select("id", { count: "exact", head: true }).eq("doctor_id", doctorId).eq("tipo_consulta", "presencial"),
+    supabase.from("turnos").select("id", { count: "exact", head: true }).eq("doctor_id", doctorId).eq("tipo_consulta", "videoconsulta"),
     supabase
       .from("turnos")
-      .select("id, nombre, email, telefono, motivo, fecha_preferida, hora_preferida, estado")
+      .select("id, nombre, email, telefono, motivo, fecha_preferida, hora_preferida, estado, tipo_consulta")
+      .eq("doctor_id", doctorId)
       .eq("fecha_preferida", todayIso)
       .eq("estado", "confirmado")
       .order("hora_preferida", { ascending: true })
       .limit(10),
     supabase
       .from("estudios")
-      .select("id, titulo, categoria, fecha, hora, file_url, external_url")
+      .select("id, paciente_id, titulo, categoria, fecha, archivo_url, es_descargable")
       .order("created_at", { ascending: false })
       .limit(4),
   ]);
 
-  if (pendingResult.error || upcomingWeekResult.error || upcomingMonthResult.error || todayAppointmentsResult.error || estudiosResult.error) {
-    throw new Error(pendingResult.error?.message || upcomingWeekResult.error?.message || upcomingMonthResult.error?.message || todayAppointmentsResult.error?.message || estudiosResult.error?.message || "Error cargando datos del panel");
+  if (pendingResult.error || upcomingWeekResult.error || upcomingMonthResult.error || presencialCrmResult.error || videoconsultaCrmResult.error || todayAppointmentsResult.error || estudiosResult.error) {
+    throw new Error(pendingResult.error?.message || upcomingWeekResult.error?.message || upcomingMonthResult.error?.message || presencialCrmResult.error?.message || videoconsultaCrmResult.error?.message || todayAppointmentsResult.error?.message || estudiosResult.error?.message || "Error cargando datos del panel");
   }
 
   const pendingCount = pendingResult.count ?? 0;
   const upcomingWeekCount = upcomingWeekResult.count ?? 0;
   const upcomingMonthCount = upcomingMonthResult.count ?? 0;
+  const presencialCrmCount = presencialCrmResult.count ?? 0;
+  const videoconsultaCrmCount = videoconsultaCrmResult.count ?? 0;
   const todayAppointments = (todayAppointmentsResult.data ?? []) as Database["public"]["Tables"]["turnos"]["Row"][];
-  const estudios = (estudiosResult.data ?? []) as Database["public"]["Tables"]["estudios"]["Row"][];
+  const estudios = (estudiosResult.data ?? []) as unknown as Array<{
+    id: string;
+    titulo: string;
+    categoria: string;
+    fecha: string;
+    archivo_url: string | null;
+  }>;
 
   return (
     <main className="min-h-screen bg-[var(--background)] text-[var(--foreground)]">
@@ -95,7 +99,7 @@ export default async function PanelPage() {
             </div>
           </div>
 
-          <div className="grid gap-4 lg:grid-cols-4">
+          <div className="grid gap-4 lg:grid-cols-6">
             <article className="rounded-[2rem] border border-[var(--border)] bg-[var(--card)] p-6 shadow-[0_24px_80px_rgba(14,75,78,0.08)]">
               <p className="text-sm uppercase tracking-[0.3em] text-[var(--accent)]">Solicitudes pendientes</p>
               <h2 className="mt-4 text-4xl font-semibold text-[var(--primary)]">{pendingCount}</h2>
@@ -115,6 +119,16 @@ export default async function PanelPage() {
               <p className="text-sm uppercase tracking-[0.3em] text-[var(--accent)]">Resultados subidos</p>
               <h2 className="mt-4 text-4xl font-semibold text-[var(--primary)]">{estudios.length}</h2>
               <p className="mt-2 text-sm text-[var(--foreground)]/75">Últimos resultados registrados en el sistema.</p>
+            </article>
+            <article className="rounded-[2rem] border border-[var(--border)] bg-[var(--card)] p-6 shadow-[0_24px_80px_rgba(14,75,78,0.08)]">
+              <p className="text-sm uppercase tracking-[0.3em] text-[var(--accent)]">CRM presencial</p>
+              <h2 className="mt-4 text-4xl font-semibold text-[var(--primary)]">{presencialCrmCount}</h2>
+              <p className="mt-2 text-sm text-[var(--foreground)]/75">Turnos presenciales registrados.</p>
+            </article>
+            <article className="rounded-[2rem] border border-[var(--border)] bg-[var(--card)] p-6 shadow-[0_24px_80px_rgba(14,75,78,0.08)]">
+              <p className="text-sm uppercase tracking-[0.3em] text-[var(--accent)]">CRM videoconsultas</p>
+              <h2 className="mt-4 text-4xl font-semibold text-[var(--primary)]">{videoconsultaCrmCount}</h2>
+              <p className="mt-2 text-sm text-[var(--foreground)]/75">Videoconsultas registradas en Jitsi.</p>
             </article>
           </div>
 
@@ -144,6 +158,7 @@ export default async function PanelPage() {
                         </span>
                       </div>
                       <p className="mt-3 text-sm text-[var(--foreground)]/85">{turno.motivo}</p>
+                      <p className="mt-2 text-xs font-semibold uppercase tracking-wider text-[var(--accent)]">{turno.tipo_consulta === "presencial" ? "CRM presencial" : "CRM videoconsulta · Jitsi"}</p>
                       <p className="mt-3 text-xs text-[var(--foreground)]/70">{turno.email} · {turno.telefono}</p>
                     </article>
                   ))
@@ -165,9 +180,9 @@ export default async function PanelPage() {
                     <article key={estudio.id} className="rounded-[2rem] border border-[var(--border)] bg-[var(--background)] p-5">
                       <p className="text-sm uppercase tracking-[0.24em] text-[var(--accent)]">{estudio.categoria}</p>
                       <h3 className="mt-2 text-lg font-semibold text-[var(--primary)]">{estudio.titulo}</h3>
-                      <p className="mt-2 text-sm text-[var(--foreground)]/80">{formatDateTime(estudio.fecha, estudio.hora)}</p>
+                      <p className="mt-2 text-sm text-[var(--foreground)]/80">{estudio.fecha}</p>
                       <div className="mt-4 flex flex-wrap gap-3">
-                        <a href={estudio.file_url ?? estudio.external_url ?? "#"} target="_blank" rel="noreferrer" className="rounded-full bg-[var(--primary)] px-4 py-2 text-xs font-semibold text-white transition hover:bg-[var(--primary)]/90">
+                        <a href={estudio.archivo_url ?? "#"} target="_blank" rel="noreferrer" className="rounded-full bg-[var(--primary)] px-4 py-2 text-xs font-semibold text-white transition hover:bg-[var(--primary)]/90">
                           Ver resultado
                         </a>
                       </div>

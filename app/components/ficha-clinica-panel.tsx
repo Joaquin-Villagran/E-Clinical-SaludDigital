@@ -44,7 +44,7 @@ type NewPatientForm = {
 };
 
 type Props = {
-  turnoId: string;
+  turnoId?: string;
   pacienteId: string | null;
   prefill: { nombreCompleto: string; telefono: string; email: string; obraSocial: string | null };
   initialActiveTab?: "datos" | "antecedentes" | "consultas" | "diagnosticos" | "medicaciones" | "recetas" | "estudios";
@@ -69,7 +69,7 @@ function renderRows(items: Array<Record<string, unknown>>, columns: Array<{ key:
 }
 
 // Abre el diálogo de impresión del navegador: el médico elige "Guardar como PDF" sin depender de librerías externas.
-function printFicha(bundle: FichaBundle) {
+function printFicha(bundle: FichaBundle, title: string) {
   const printWindow = window.open("", "_blank", "width=900,height=1000");
   if (!printWindow) return;
 
@@ -98,7 +98,6 @@ function printFicha(bundle: FichaBundle) {
     ${renderRows(bundle.consultas, [
       { key: "fecha", label: "Fecha" },
       { key: "motivo_consulta", label: "Motivo" },
-      { key: "examen_fisico", label: "Examen físico" },
       { key: "observaciones", label: "Observaciones" },
     ])}
 
@@ -110,10 +109,11 @@ function printFicha(bundle: FichaBundle) {
     ])}
 
     <h2>Medicaciones</h2>
-    ${renderRows(bundle.medicaciones, [
+    ${renderRows(bundle.medicaciones.map((medicacion) => ({ ...medicacion, fecha_fin: medicacion.cronica ? "De por vida" : medicacion.fecha_fin ?? "No informada" })), [
       { key: "nombre_medicamento", label: "Medicamento" },
       { key: "dosis", label: "Dosis" },
       { key: "frecuencia", label: "Frecuencia" },
+      { key: "fecha_fin", label: "Duración" },
       { key: "activa", label: "Activa" },
     ])}
 
@@ -142,7 +142,7 @@ function printFicha(bundle: FichaBundle) {
       th { background: #f6f4ef; }
     </style>
   </head><body>
-    <h1>Ficha clínica</h1>
+    <h1>${escapeHtml(title)}</h1>
     <p>Generada el ${escapeHtml(new Date().toLocaleString("es-AR"))}</p>
     ${sections}
   </body></html>`);
@@ -172,11 +172,48 @@ export default function FichaClinicaPanel({ turnoId, pacienteId: initialPaciente
 
   const newPatientValid = newPatient.nombre.trim() && newPatient.apellido.trim() && newPatient.dni.trim();
 
+  function getTurnoBundle() {
+    if (!turnoId) return null;
+    const consulta = bundle?.consultas.find((item) => {
+      const metadata = item.metadata;
+      return metadata && typeof metadata === "object" && !Array.isArray(metadata) && "turno_id" in metadata && metadata.turno_id === turnoId;
+    });
+    if (!consulta) return null;
+    return {
+      ...bundle!,
+      antecedentes: [],
+      consultas: [consulta],
+      diagnosticos: bundle!.diagnosticos.filter((item) => item.consulta_id === consulta.id),
+      medicaciones: bundle!.medicaciones.filter((item) => item.consulta_id === consulta.id),
+      recetas: bundle!.recetas.filter((item) => item.consulta_id === consulta.id),
+      estudios: bundle!.estudios.filter((item) => item.consulta_id === consulta.id),
+    };
+  }
+
   useEffect(() => {
-    if (initialPacienteId) void loadFicha(initialPacienteId);
+    if (initialPacienteId) {
+      void (async () => {
+        try {
+          if (turnoId) await syncTurnoConsulta();
+        } catch {
+          // La ficha sigue disponible aunque la sincronización del turno requiera revisión.
+        }
+        await loadFicha(initialPacienteId);
+      })();
+    }
     // Sólo se carga con el paciente que llegó al montar; las creaciones posteriores llaman loadFicha directamente.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  async function syncTurnoConsulta() {
+    if (!turnoId) return;
+    const response = await fetch("/api/consultas/from-turno", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ turno_id: turnoId }),
+    });
+    if (!response.ok) throw new Error("No se pudo guardar la agenda en Consultas.");
+  }
 
   async function loadFicha(id: string) {
     setLoadingFicha(true);
@@ -206,6 +243,7 @@ export default function FichaClinicaPanel({ turnoId, pacienteId: initialPaciente
       if (!response.ok) throw new Error(payload.error || "No se pudo crear la historia clínica.");
       if (payload.existing) setLinkNotice("Ya existía una ficha con ese DNI o email: se vinculó al turno.");
       setPacienteId(payload.paciente.id);
+      if (turnoId) await syncTurnoConsulta();
       await loadFicha(payload.paciente.id);
       router.refresh();
     } catch (error) {
@@ -293,14 +331,26 @@ export default function FichaClinicaPanel({ turnoId, pacienteId: initialPaciente
       {linkNotice ? <p className="mb-4 rounded-md border border-[var(--accent)]/40 bg-[var(--accent)]/10 px-3 py-2 text-sm text-[var(--primary)]">{linkNotice}</p> : null}
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm font-semibold text-[var(--primary)]">Ficha clínica completa</p>
-        <button
-          type="button"
-          onClick={() => printFicha(bundle)}
-          className="inline-flex items-center gap-2 rounded-full border border-[var(--primary)] px-4 py-2 text-sm font-semibold text-[var(--primary)]"
-        >
-          <Download className="h-4 w-4" />
-          Descargar PDF
-        </button>
+        <div className="flex flex-wrap justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => printFicha(bundle, "Ficha clínica completa")}
+            className="inline-flex items-center gap-2 rounded-full border border-[var(--primary)] px-4 py-2 text-sm font-semibold text-[var(--primary)]"
+          >
+            <Download className="h-4 w-4" />
+            Ficha completa
+          </button>
+          {turnoId && getTurnoBundle() ? (
+            <button
+              type="button"
+              onClick={() => printFicha(getTurnoBundle()!, "Ficha clínica del turno")}
+              className="inline-flex items-center gap-2 rounded-full bg-[var(--primary)] px-4 py-2 text-sm font-semibold text-white"
+            >
+              <Download className="h-4 w-4" />
+              Solo este turno
+            </button>
+          ) : null}
+        </div>
       </div>
       <div className="mt-4">
         <PatientEHRForm

@@ -1,4 +1,5 @@
 import { createAdminSupabase, getServerUser } from "@/lib/supabase-server";
+import { randomUUID } from "crypto";
 
 export type TeleconsultaRole = "doctor" | "patient";
 export type TeleconsultaAccessState = "active" | "too_early" | "finished" | "unavailable" | "forbidden";
@@ -21,6 +22,10 @@ export type TeleconsultaTurno = {
   meet_link: string | null;
   fecha_hora_inicio_real: string | null;
   fecha_hora_fin_real: string | null;
+  video_room: string | null;
+  video_started_at: string | null;
+  video_ended_at: string | null;
+  video_status: "pending" | "waiting" | "in_progress" | "completed";
 };
 
 export type AuthorizedTeleconsulta = {
@@ -39,7 +44,16 @@ type TeleconsultaSchedule = Pick<
   "estado" | "tipo_consulta" | "fecha_preferida" | "hora_preferida" | "duracion_minutos" | "fecha_hora_fin_real"
 >;
 
+export function isTurnoFinalizado(
+  turno: Pick<TeleconsultaTurno, "estado" | "fecha_hora_fin_real" | "video_status"> | { estado?: string | null; fecha_hora_fin_real?: string | null; video_status?: string | null },
+) {
+  return turno.estado === "finalizado" || turno.video_status === "completed" || Boolean(turno.fecha_hora_fin_real);
+}
+
 export function getTeleconsultaAccessState(turno: TeleconsultaSchedule, now = new Date()): TeleconsultaAccessState {
+  // Si el turno ya tuvo cierre real o se marcó como finalizado, la sesión quedó cerrada.
+  if (isTurnoFinalizado(turno)) return "finished";
+
   // en_consulta sólo se acepta para recuperar turnos que se guardaron con el flujo anterior.
   if ((turno.estado !== "confirmado" && turno.estado !== "en_consulta") || turno.tipo_consulta !== "videoconsulta") return "unavailable";
 
@@ -47,10 +61,7 @@ export function getTeleconsultaAccessState(turno: TeleconsultaSchedule, now = ne
   if (Number.isNaN(start.getTime())) return "unavailable";
 
   const earlyAccess = new Date(start.getTime() - 10 * 60 * 1000);
-  const duration = Math.max(1, turno.duracion_minutos ?? 30);
-  const scheduledEnd = new Date(start.getTime() + duration * 60 * 1000);
   if (now < earlyAccess) return "too_early";
-  if (now > scheduledEnd || turno.fecha_hora_fin_real) return "finished";
   return "active";
 }
 
@@ -74,7 +85,7 @@ export async function getAuthorizedTeleconsulta(turnoId: string, role: Teleconsu
   const supabase = createAdminSupabase();
   const turnoResult = await supabase
     .from("turnos")
-    .select("id, paciente_id, paciente_user_id, doctor_id, nombre, email, telefono, motivo, fecha_preferida, hora_preferida, obra_social, estado, tipo_consulta, duracion_minutos, meet_link, fecha_hora_inicio_real, fecha_hora_fin_real")
+    .select("id, paciente_id, paciente_user_id, doctor_id, nombre, email, telefono, motivo, fecha_preferida, hora_preferida, obra_social, estado, tipo_consulta, duracion_minutos, meet_link, fecha_hora_inicio_real, fecha_hora_fin_real, video_room, video_started_at, video_ended_at, video_status")
     .eq("id", turnoId)
     .maybeSingle();
   if (turnoResult.error || !turnoResult.data) return { state: "forbidden", turno: null, doctor: null };
@@ -92,4 +103,13 @@ export async function getAuthorizedTeleconsulta(turnoId: string, role: Teleconsu
   }
 
   return { state: getTeleconsultaAccessState(turno), turno, doctor };
+}
+
+export async function getOrCreateVideoRoom(turno: Pick<TeleconsultaTurno, "id" | "video_room">) {
+  if (turno.video_room) return turno.video_room;
+  const room = `eclinical-${randomUUID()}`;
+  const supabase = createAdminSupabase();
+  const result = await supabase.from("turnos").update({ video_room: room, video_status: "waiting" }).eq("id", turno.id).is("video_room", null).select("video_room").maybeSingle();
+  if (result.error) throw new Error("No se pudo preparar la sala de teleconsulta.");
+  return result.data?.video_room ?? (await supabase.from("turnos").select("video_room").eq("id", turno.id).single()).data?.video_room ?? room;
 }

@@ -20,9 +20,19 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
   const supabase = createAdminSupabase();
   const now = new Date().toISOString();
   const updates = body.action === "iniciar"
-    ? { fecha_hora_inicio_real: authorized.turno.fecha_hora_inicio_real ?? now }
-    : { fecha_hora_fin_real: now };
-  const result = await supabase.from("turnos").update(updates).eq("id", id).select("fecha_hora_inicio_real, fecha_hora_fin_real").maybeSingle();
+    ? {
+        fecha_hora_inicio_real: authorized.turno.fecha_hora_inicio_real ?? now,
+        video_started_at: authorized.turno.video_started_at ?? now,
+        video_status: "in_progress",
+        estado: "en_consulta",
+      }
+    : {
+        fecha_hora_fin_real: now,
+        video_ended_at: now,
+        video_status: "completed",
+        estado: "finalizado",
+      };
+  const result = await supabase.from("turnos").update(updates).eq("id", id).select("fecha_hora_inicio_real, fecha_hora_fin_real, video_started_at, video_ended_at, video_status").maybeSingle();
   if (result.error) return NextResponse.json({ error: result.error.message }, { status: 500 });
 
   return NextResponse.json({ ok: true, turno: result.data });

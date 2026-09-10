@@ -22,6 +22,7 @@ type EstudioRow = {
   es_descargable: boolean;
   created_at: string;
 };
+type AgendaTurno = { id: string; doctor_id: string | null; fecha_preferida: string; hora_preferida: string; motivo: string | null; tipo_consulta: string | null; estado: string };
 
 function calculateAge(fechaNacimiento?: string | null) {
   if (!fechaNacimiento) return "No disponible";
@@ -37,19 +38,22 @@ function calculateAge(fechaNacimiento?: string | null) {
   return `${age} años`;
 }
 
-export default async function PatientEHRPage({ params }: { params: { id: string } }) {
+export default async function PatientEHRPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await getServerUser();
   if (!user || user.user_metadata?.role !== "doctor") {
     redirect("/login");
   }
 
+  const { id: patientId } = await params;
+  if (!patientId) redirect("/panel/pacientes");
+
   const supabase = await createServerSupabase();
   const patientResult = await supabase
     .from("pacientes")
     .select(
-      "id, nombre, apellido, dni, fecha_nacimiento, sexo, direccion, telefono, email, obra_social, numero_afiliado, contacto_emergencia_nombre, contacto_emergencia_telefono, created_at, updated_at"
+      "id, user_id, nombre, apellido, dni, fecha_nacimiento, sexo, direccion, telefono, email, obra_social, numero_afiliado, contacto_emergencia_nombre, contacto_emergencia_telefono, created_at, updated_at"
     )
-    .eq("id", params.id)
+    .eq("id", patientId)
     .maybeSingle();
 
   if (patientResult.error) {
@@ -62,37 +66,81 @@ export default async function PatientEHRPage({ params }: { params: { id: string 
 
   const patient = patientResult.data as PatientRow;
 
+  const doctorResult = await supabase.from("doctors").select("id").eq("user_id", user.id).maybeSingle();
+  const currentDoctor = doctorResult.data as unknown as { id: string } | null;
+  const consultasTable = supabase.from("consultas") as unknown as { insert: (rows: Record<string, unknown>[]) => Promise<unknown> };
+  const agendaTurnosByPatient = await supabase
+    .from("turnos")
+    .select("id, doctor_id, fecha_preferida, hora_preferida, motivo, tipo_consulta, estado")
+    .eq("paciente_id", patientId)
+    .order("fecha_preferida", { ascending: false });
+  const agendaTurnosByUser = patient.user_id
+    ? await supabase.from("turnos").select("id, doctor_id, fecha_preferida, hora_preferida, motivo, tipo_consulta, estado").eq("paciente_user_id", patient.user_id).order("fecha_preferida", { ascending: false })
+    : { data: [] };
+  const agendaTurnosByEmail = patient.email
+    ? await supabase.from("turnos").select("id, doctor_id, fecha_preferida, hora_preferida, motivo, tipo_consulta, estado").eq("email", patient.email).order("fecha_preferida", { ascending: false })
+    : { data: [] };
+
+  const agendaTurnos = Array.from(new Map([
+    ...((agendaTurnosByPatient.data ?? []) as unknown as AgendaTurno[]),
+    ...((agendaTurnosByUser.data ?? []) as unknown as AgendaTurno[]),
+    ...((agendaTurnosByEmail.data ?? []) as unknown as AgendaTurno[]),
+  ].map((turno) => [turno.id, turno])).values()) as AgendaTurno[];
+  for (const turno of agendaTurnos) {
+    const existingConsulta = await supabase
+      .from("consultas")
+      .select("id")
+      .eq("turno_id", turno.id)
+      .maybeSingle();
+
+    if (!existingConsulta.error && !existingConsulta.data && (turno.doctor_id || currentDoctor?.id)) {
+      await consultasTable.insert([{
+        paciente_id: patientId,
+        turno_id: turno.id,
+        profesional_id: turno.doctor_id ?? currentDoctor?.id ?? null,
+        fecha: turno.fecha_preferida,
+        motivo_consulta: turno.motivo,
+        observaciones: `Agenda: ${turno.fecha_preferida} a las ${String(turno.hora_preferida).slice(0, 5)} hs. Modalidad: ${turno.tipo_consulta === "videoconsulta" ? "Teleconsulta" : "Consulta presencial"}. Estado inicial: ${turno.estado}.`,
+        metadata: {
+          turno_id: turno.id,
+          hora_agendada: turno.hora_preferida,
+          modalidad: turno.tipo_consulta,
+          estado_turno: turno.estado,
+        },
+      }]);
+    }
+  }
+
   const [antecedentesResult, consultasResult, diagnosticosResult, medicacionesResult, recetasResult] = await Promise.all([
     supabase
       .from("antecedentes")
-      .select("id, tipo, titulo, descripcion, fecha_registro, created_at, updated_at, metadata, paciente_id")
-      .eq("paciente_id", params.id)
+      .select("id, tipo, descripcion, fecha_registro, created_at, updated_at, paciente_id")
+      .eq("paciente_id", patientId)
       .order("fecha_registro", { ascending: false })
       .limit(50),
     supabase
       .from("consultas")
-      .select("id, paciente_id, profesional_id, fecha, motivo_consulta, examen_fisico, observaciones, created_at, updated_at, metadata")
-      .eq("paciente_id", params.id)
+      .select("id, paciente_id, profesional_id, fecha, motivo_consulta, examen_fisico, observaciones, created_at, updated_at")
+      .eq("paciente_id", patientId)
       .order("fecha", { ascending: false })
-      .order("created_at", { ascending: false })
-      .limit(40),
+      .order("created_at", { ascending: false }),
     supabase
       .from("diagnosticos")
-      .select("id, consulta_id, paciente_id, descripcion, codigo_cie10, fecha, created_at, updated_at, metadata")
-      .eq("paciente_id", params.id)
+      .select("id, consulta_id, paciente_id, descripcion, codigo_cie10, fecha, created_at, updated_at")
+      .eq("paciente_id", patientId)
       .order("fecha", { ascending: false })
       .order("created_at", { ascending: false })
       .limit(40),
     supabase
       .from("medicaciones")
-      .select("id, paciente_id, consulta_id, nombre_medicamento, dosis, frecuencia, fecha_inicio, fecha_fin, activa, created_at, updated_at, metadata")
-      .eq("paciente_id", params.id)
+      .select("id, paciente_id, consulta_id, nombre_medicamento, dosis, frecuencia, fecha_inicio, fecha_fin, cronica, activa, created_at, updated_at")
+      .eq("paciente_id", patientId)
       .order("created_at", { ascending: false })
       .limit(40),
     supabase
       .from("recetas")
-      .select("id, paciente_id, consulta_id, fecha_emision, pdf_url, created_at, updated_at, metadata")
-      .eq("paciente_id", params.id)
+      .select("id, paciente_id, consulta_id, fecha_emision, pdf_url, created_at, updated_at")
+      .eq("paciente_id", patientId)
       .order("fecha_emision", { ascending: false })
       .order("created_at", { ascending: false })
       .limit(40),
@@ -101,35 +149,19 @@ export default async function PatientEHRPage({ params }: { params: { id: string 
   const estudiosNewResult = await supabase
     .from("estudios")
     .select("id, paciente_id, consulta_id, titulo, categoria, fecha, archivo_url, es_descargable, created_at")
-    .eq("paciente_id", params.id)
+    .eq("paciente_id", patientId)
     .order("fecha", { ascending: false })
     .order("created_at", { ascending: false })
     .limit(40);
 
-  if (!estudiosNewResult.error) {
-    estudios = (estudiosNewResult.data ?? []) as EstudioRow[];
-  } else {
-    const estudiosLegacyResult = await supabase
-      .from("estudios")
-      .select("id, titulo, categoria, fecha, file_url, created_at")
-      .eq("paciente_email", patient.email ?? "")
-      .order("fecha", { ascending: false })
-      .order("created_at", { ascending: false })
-      .limit(40);
-
-    estudios = (estudiosLegacyResult.data ?? []).map((item) => ({
-      id: item.id,
-      paciente_id: params.id,
-      consulta_id: null,
-      titulo: item.titulo,
-      categoria: item.categoria,
-      fecha: item.fecha,
-      archivo_url: item.file_url,
-      es_descargable: Boolean(item.file_url),
-      created_at: item.created_at,
-    })) as EstudioRow[];
+  if (estudiosNewResult.error) {
+    throw new Error(estudiosNewResult.error.message);
   }
-  const antecedentes = (antecedentesResult.data ?? []) as AntecedenteRow[];
+  estudios = (estudiosNewResult.data ?? []) as EstudioRow[];
+  const antecedentes = ((antecedentesResult.data ?? []) as unknown as Array<Record<string, unknown>>).map((item) => ({
+    ...item,
+    titulo: item.tipo,
+  })) as unknown as AntecedenteRow[];
   const consultas = (consultasResult.data ?? []) as ConsultaRow[];
   const diagnosticos = (diagnosticosResult.data ?? []) as DiagnosticoRow[];
   const medicaciones = (medicacionesResult.data ?? []) as MedicacionRow[];
