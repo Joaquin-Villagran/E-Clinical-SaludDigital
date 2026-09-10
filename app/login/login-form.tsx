@@ -74,7 +74,7 @@ export default function LoginForm({ confirmed, initialMode, forceAccountType, hi
         return;
       }
 
-      const redirectTo = typeof window !== "undefined" ? `${window.location.origin}/login?confirmed=true` : undefined;
+      const redirectTo = typeof window !== "undefined" ? `${window.location.origin}/auth/callback` : undefined;
       const { error } = await supabase.auth.signUp(
         { email: trimmedEmail, password },
         {
